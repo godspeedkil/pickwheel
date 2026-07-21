@@ -92,7 +92,7 @@
       { id: id(), label: 'Burgers', weight: 2, color: null, image: null }
     ],
     paletteName: 'Carnival',
-    settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, idleSpin: false, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
+    settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
     sound: {
       music: true, tick: true, win: true, volume: 0.7,
       source: { music: 'generated', tick: 'generated', win: 'generated' },
@@ -923,7 +923,7 @@
     if(!state.sound.variant) state.sound.variant = { music:'classic', tick:'classic', win:'classicChime' };
     if(typeof state.settings.randomizeAngle !== 'boolean') state.settings.randomizeAngle = false;
     if(typeof state.settings.labelCharLimit !== 'number') state.settings.labelCharLimit = 32;
-    if(typeof state.settings.idleSpin !== 'boolean') state.settings.idleSpin = false;
+    if(typeof state.settings.idleSpin !== 'boolean') state.settings.idleSpin = true;
     if(!state.settings.bannerImageLayout) state.settings.bannerImageLayout = 'left';
     if(!state.settings.bannerImageFit) state.settings.bannerImageFit = 'contain';
     if(!state.settings.wheelTitleFont || !TITLE_FONTS.find(f=>f.id===state.settings.wheelTitleFont)) state.settings.wheelTitleFont = 'fraunces';
