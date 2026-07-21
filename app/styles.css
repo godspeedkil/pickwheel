@@ -403,7 +403,7 @@ select.field-select{
   display:flex; overflow:hidden;
 }
 .palette-swatch.active{ border-color: var(--gold); }
-.palette-swatch span{ flex:1; }
+.palette-swatch span{ flex:1; align-self: stretch; height: 100%; min-height: 100%; }
 
 /* ---------- Saved ---------- */
 .save-row{ display:flex; gap:8px; margin-bottom: 14px; }
