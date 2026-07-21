@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="PickWheel — a customizable picker wheel with weighted odds, sound design, and per-item images.">
+<title>PickWheel</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">✦</span><span class="brand-name">PickWheel</span></div>
+    <div class="wheel-name-edit">
+      <input id="wheelNameInput" value="Untitled Wheel" maxlength="60" aria-label="Wheel name">
+    </div>
+    <button class="new-wheel-btn" id="newWheelBtn" title="Start a fresh wheel">New wheel</button>
+  </header>
+
+  <main class="stage-grid">
+    <section class="wheel-stage">
+      <div class="winner-banner" id="winnerBanner">
+        <div class="banner-ribbon" id="bannerRibbon">
+          <button class="banner-close" id="winnerBannerClose" title="Dismiss" aria-label="Dismiss">✕</button>
+          <img class="banner-bg-image" id="bannerBgImage" alt="">
+          <div class="banner-content">
+            <img class="banner-side-image" id="bannerSideImage" alt="">
+            <div class="banner-text">
+              <span class="banner-label" id="bannerLabel">Winner</span>
+              <span class="banner-name" id="winnerText">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="wheel-wrap">
+        <div class="pointer"></div>
+        <canvas id="wheelCanvas" width="600" height="600"></canvas>
+        <button class="hub-btn" id="spinBtn">SPIN</button>
+      </div>
+      <canvas class="confetti-canvas" id="confettiCanvas"></canvas>
+      <p class="stage-foot">Tap <b>SPIN</b> or press <b>Space</b> to go — tap again to cancel mid-spin. The wheel picks a weighted-random winner the instant you spin; the animation just shows you the result.</p>
+    </section>
+
+    <aside class="panel">
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="items">Items</button>
+        <button class="tab-btn" data-tab="batch">Batch</button>
+        <button class="tab-btn" data-tab="settings">Settings</button>
+        <button class="tab-btn" data-tab="sounds">Sounds</button>
+        <button class="tab-btn" data-tab="saved">Saved</button>
+        <button class="tab-btn" data-tab="history">History</button>
+      </nav>
+
+      <div class="tab-panels">
+
+        <!-- ITEMS -->
+        <div class="tab-panel active" id="tab-items">
+          <h3 class="panel-title">Items</h3>
+          <p class="panel-sub">Give each item a weight — bigger weight, bigger slice. Click a dot to recolor it, or switch palettes in Settings to recolor everything at once.</p>
+          <div id="itemsList"></div>
+          <div class="btn-row">
+            <button class="btn primary" id="addItemBtn">+ Add item</button>
+            <button class="btn" id="shuffleBtn">Shuffle order</button>
+            <button class="btn danger" id="clearItemsBtn">Clear all</button>
+          </div>
+        </div>
+
+        <!-- BATCH -->
+        <div class="tab-panel" id="tab-batch">
+          <h3 class="panel-title">Batch add</h3>
+          <p class="panel-sub">One item per line: <code>Name, weight</code>. Weight is optional and defaults to 1.</p>
+          <textarea id="batchInput" placeholder="Pizza, 3
+Sushi, 1
+Tacos
+Burgers, 2"></textarea>
+          <div class="btn-row">
+            <button class="btn primary" id="batchAppendBtn">Add to wheel</button>
+            <button class="btn danger" id="batchReplaceBtn">Replace wheel</button>
+          </div>
+        </div>
+
+        <!-- SETTINGS -->
+        <div class="tab-panel" id="tab-settings">
+          <h3 class="panel-title">Wheel title</h3>
+          <p class="panel-sub">The editable name at the top of the page (e.g. "Untitled Wheel").</p>
+          <div class="field">
+            <label style="margin-bottom:6px;">Title font</label>
+            <select class="field-select" id="titleFontSelect">
+              <option value="fraunces">Fraunces — elegant</option>
+              <option value="playfair">Playfair Display — classic</option>
+              <option value="bebas">Bebas Neue — bold</option>
+              <option value="spacegrotesk">Space Grotesk — modern</option>
+              <option value="righteous">Righteous — playful</option>
+              <option value="caveat">Caveat — handwritten</option>
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:20px;">
+            <label>Title size <span class="val" id="wheelTitleSizeVal">26px</span></label>
+            <input type="range" id="wheelTitleSizeRange" min="16" max="44" step="1" value="26">
+          </div>
+
+          <h3 class="panel-title">Spin behavior</h3>
+          <div class="field">
+            <label>Spin duration <span class="val" id="durationVal">6s</span></label>
+            <input type="range" id="durationRange" min="2" max="30" step="1" value="6">
+          </div>
+          <div class="field">
+            <label>Extra rotations (speed) <span class="val" id="spinsVal">6</span></label>
+            <input type="range" id="spinsRange" min="2" max="20" step="1" value="6">
+          </div>
+          <div class="field">
+            <label>Resting angle <span class="val" id="angleVal">0°</span></label>
+            <input type="range" id="angleRange" min="0" max="359" step="1" value="0">
+          </div>
+          <div class="switch-row" style="border-bottom:none; padding-top:0; margin-bottom:16px;">
+            <div class="lbl">Randomize starting angle<small>Pick a new resting angle before every spin</small></div>
+            <label class="switch"><input type="checkbox" id="randomizeAngle"><span class="track"></span></label>
+          </div>
+          <div class="switch-row" style="border-bottom:none; padding-top:0; margin-bottom:16px;">
+            <div class="lbl">Idle spin<small>Wheel rotates slowly for looks when it's not spinning — never produces a result</small></div>
+            <label class="switch"><input type="checkbox" id="idleSpin"><span class="track"></span></label>
+          </div>
+          <div class="field">
+            <label style="margin-bottom:0;">Easing style</label>
+            <select class="field-select" id="easingSelect">
+              <option value="cubic">Smooth (ease-out cubic)</option>
+              <option value="quint">Dramatic (ease-out quint)</option>
+              <option value="linear">Mechanical (linear)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Label length on wheel <span class="val" id="labelLimitVal">32 chars</span></label>
+            <input type="range" id="labelLimitRange" min="10" max="50" step="1" value="32">
+          </div>
+
+          <h3 class="panel-title" style="margin-top:22px;">Winner banner image</h3>
+          <p class="panel-sub">Add images to individual items in the Items tab. When an item with an image wins, these control how it's shown.</p>
+          <div class="field">
+            <label style="margin-bottom:6px;">Layout</label>
+            <select class="field-select" id="bannerImageLayout">
+              <option value="left">Image on left</option>
+              <option value="right">Image on right</option>
+              <option value="top">Image on top</option>
+              <option value="bottom">Image on bottom</option>
+              <option value="background">Image as background</option>
+            </select>
+          </div>
+          <div class="field">
+            <label style="margin-bottom:6px;">Image fit</label>
+            <select class="field-select" id="bannerImageFit">
+              <option value="contain">Fit (show the whole image)</option>
+              <option value="cover">Crop (fill the box)</option>
+              <option value="fill">Stretch (fill exactly, may distort)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Image opacity <span class="val" id="bannerImageOpacityVal">100%</span></label>
+            <input type="range" id="bannerImageOpacityRange" min="10" max="100" step="5" value="100">
+          </div>
+
+          <h3 class="panel-title" style="margin-top:22px;">Wheel colors</h3>
+          <p class="panel-sub">Switching palettes recolors every item to match — any custom colors you've picked are reset.</p>
+          <div class="field" style="margin-bottom:10px;">
+            <label style="margin-bottom:6px;">Theme</label>
+            <select class="field-select" id="paletteGroupSelect"></select>
+          </div>
+          <p class="panel-sub hidden" id="paletteSourceNote" style="margin:-2px 0 8px;"></p>
+          <div class="palette-grid" id="paletteGrid"></div>
+
+          <h3 class="panel-title" style="margin-top:22px;">Build your own</h3>
+          <p class="panel-sub">Add colors, name it, and save it — it'll show up under My Palettes above.</p>
+          <div class="save-row">
+            <input type="text" id="customPaletteName" placeholder="Name this palette…" maxlength="30">
+          </div>
+          <div class="palette-color-rows" id="customPaletteColors"></div>
+          <div class="btn-row">
+            <button class="btn small" id="addPaletteColorBtn">+ Add color</button>
+            <button class="btn small primary" id="savePaletteBtn">Save palette</button>
+          </div>
+        </div>
+
+        <!-- SOUNDS -->
+        <div class="tab-panel" id="tab-sounds">
+          <h3 class="panel-title">Sound design</h3>
+          <p class="panel-sub">Pick from a library of generated sounds, or upload your own clips (MP3, WAV, OGG, and more — up to 25 clips, ~3.5MB each) and one plays at random each spin.</p>
+          <div id="soundRows"></div>
+          <div class="field" style="margin-top:16px;">
+            <label>Volume <span class="val" id="volVal">70%</span></label>
+            <input type="range" id="volRange" min="0" max="100" step="1" value="70">
+          </div>
+        </div>
+
+        <!-- SAVED -->
+        <div class="tab-panel" id="tab-saved">
+          <h3 class="panel-title">Saved wheels</h3>
+          <p class="panel-sub">Save your items, colors and settings under a name, and reload them anytime.</p>
+          <div class="save-row">
+            <input type="text" id="saveNameInput" placeholder="Name this wheel…" maxlength="40">
+            <button class="btn primary small" id="saveWheelBtn">Save</button>
+          </div>
+          <div id="savedList"></div>
+        </div>
+
+        <!-- HISTORY -->
+        <div class="tab-panel" id="tab-history">
+          <h3 class="panel-title">Spin history</h3>
+          <div id="tallyBox" class="tally"></div>
+          <div class="btn-row" style="margin-top:0; margin-bottom:12px;">
+            <button class="btn danger small" id="clearHistoryBtn">Clear history</button>
+          </div>
+          <div id="historyList"></div>
+        </div>
+
+      </div>
+    </aside>
+  </main>
+</div>
+
+<script src="storage-web.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
