@@ -13,10 +13,10 @@ ipcMain.handle("storage:delete", (event, key) => storage.delete(key));
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 900,
-    minHeight: 640,
+    width: 1500,
+    height: 1020,
+    minWidth: 1000,
+    minHeight: 720,
     backgroundColor: "#14121f", // matches the app's own background — avoids a white flash on launch
     autoHideMenuBar: true,
     webPreferences: {

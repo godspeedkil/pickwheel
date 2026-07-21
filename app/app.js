@@ -1124,6 +1124,8 @@
   let currentRotation = 0; // degrees, accumulates forever
 
   const IDLE_SPIN_DEG_PER_SEC = 6; // slow, ~1 full turn per minute — looks-only
+  const BASE_LABEL_FONT_SIZE = 17; // was 15 — bumped up alongside the larger wheel/UI
+  const MIN_LABEL_FONT_SIZE = 8;   // was 7
   let idleRafId = null;
   let idleLastTime = null;
   function idleSpinFrame(now){
@@ -1160,17 +1162,97 @@
     drawWheel();
   }
 
+  // Per-label font sizing (the expensive part — it involves a
+  // ctx.measureText() shrink-loop) only depends on an item's own id/label/
+  // weight, its slice's angular sweep, and label-related settings — never
+  // on rotation or color. But drawWheel() runs on every single animation
+  // frame during idle spin and real spins, where rotation is the only thing
+  // actually changing. Recomputing that shrink-loop 60 times a second for
+  // data that hasn't changed was pure waste, and got worse once "fit to
+  // slice" widened the possible font range. This cache eliminates it: font
+  // size is computed once per item when something relevant to IT changes,
+  // and every rotation-only redraw just reuses it. Geometry and color are
+  // deliberately NOT cached — they're cheap, and always need to reflect the
+  // current palette/custom colors immediately, with no risk of going stale.
+  const labelSizeCache = new Map(); // item.id -> { key, label, fontSize, labelRadius }
+
+  function getWheelLayout(){
+    const size = el.canvas.clientWidth;
+    const r = size/2 - 8;
+    const segs = segmentGeometry(); // always fresh: correct color every time, and cheap to compute
+    const settingsKey = state.settings.labelCharLimit + '::' + size;
+
+    segs.forEach(seg=>{
+      const sweepDeg = seg.end - seg.start;
+      const labelRadius = r*0.62;
+      const itemKey = seg.item.id + ':' + seg.item.label + ':' + seg.item.weight + ':' + sweepDeg.toFixed(3) + '::' + settingsKey;
+
+      const cached = labelSizeCache.get(seg.item.id);
+      if(cached && cached.key === itemKey){
+        seg.label = cached.label;
+        seg.fontSize = cached.fontSize;
+        seg.labelRadius = cached.labelRadius;
+        return;
+      }
+
+      // Every slice targets the same base font size. Text is truncated per
+      // the user's own label-length setting, then shrunk further below if
+      // it doesn't actually fit this specific slice's available arc — that
+      // safety net (using real measured width, not a guess) is what keeps
+      // text from bleeding radially past the rim or into a neighboring
+      // slice, regardless of how thin the slice is.
+      const label = truncate(seg.item.label || '—', state.settings.labelCharLimit);
+      let baseFontSize = BASE_LABEL_FONT_SIZE;
+
+      // a length-based reduction on top, so longer names start smaller
+      let fontSize = label.length <= 12 ? baseFontSize
+        : baseFontSize * Math.max(0.5, 1 - (label.length-12)*0.03);
+
+      // finally, shrink further (using real measured width, not a guess)
+      // until it actually fits the arc length this specific slice has
+      // available — this is what keeps thin slices from overflowing into
+      // neighbors regardless of label length
+      const availableArc = 2*Math.PI*labelRadius*(sweepDeg/360) * 0.86; // ~14% padding
+      ctx.font = `600 ${fontSize}px Manrope`;
+      const minFont = MIN_LABEL_FONT_SIZE;
+      while(ctx.measureText(label).width > availableArc && fontSize > minFont){
+        fontSize -= 0.5;
+        ctx.font = `600 ${fontSize}px Manrope`;
+      }
+      // the loop's floor check happens BEFORE each decrement, so the
+      // decrement itself can overshoot past minFont in that same step —
+      // clamp it back so the floor is always exactly minFont, consistently,
+      // regardless of which font size this slice happened to start from.
+      // Without this, uniform and fit mode could land on two different
+      // "overshot" floor values for the very same slice (fit mode's boosted
+      // starting point lands on a different point of the 0.5px grid than
+      // uniform's fixed 15px does), which could make a slice with a HIGHER
+      // starting size in fit mode end up rendering SMALLER than uniform —
+      // exactly backwards from what this setting is supposed to do.
+      if(fontSize < minFont){
+        fontSize = minFont;
+        ctx.font = `600 ${fontSize}px Manrope`;
+      }
+
+      seg.label = label;
+      seg.fontSize = fontSize;
+      seg.labelRadius = labelRadius;
+      labelSizeCache.set(seg.item.id, { key: itemKey, label, fontSize, labelRadius });
+    });
+
+    return { r, segs };
+  }
+
   function drawWheel(){
     const size = el.canvas.clientWidth;
     const cx = size/2, cy = size/2;
-    const r = size/2 - 8;
     ctx.clearRect(0,0,size,size);
 
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(deg2rad(currentRotation + state.settings.angle));
 
-    const segs = segmentGeometry();
+    const { r, segs } = getWheelLayout();
 
     if(segs.length === 0){
       ctx.beginPath();
@@ -1200,10 +1282,10 @@
 
       // label — clipped to this slice's own wedge so text can never bleed
       // radially past the rim or angularly into a neighboring slice, no
-      // matter how long the name or how thin the slice is.
+      // matter how long the name or how thin the slice is. Label text and
+      // font size were already computed (and cached) in getWheelLayout() —
+      // this just paints them at the current rotation, cheaply, every frame.
       const mid = deg2rad((seg.start+seg.end)/2 - 90);
-      const sweepDeg = seg.end - seg.start;
-      const labelRadius = r*0.62;
       ctx.save();
       ctx.beginPath();
       ctx.moveTo(0,0);
@@ -1212,28 +1294,14 @@
       ctx.clip();
 
       ctx.rotate(mid);
-      ctx.translate(labelRadius, 0);
+      ctx.translate(seg.labelRadius, 0);
       const flip = Math.cos(mid) < -0.02;
       ctx.rotate(flip ? Math.PI : 0);
       ctx.fillStyle = readableTextColor(seg.color);
-      const label = truncate(seg.item.label || '—', state.settings.labelCharLimit);
-
-      // start from a length-based size, then shrink further (using real
-      // measured width, not a guess) until it actually fits the arc length
-      // this specific slice has available — thin slices get smaller text
-      // automatically instead of relying on the clip alone to hide overflow
-      let fontSize = label.length <= 12 ? 15 : Math.max(10, 15 - (label.length-12)*0.35);
-      const availableArc = 2*Math.PI*labelRadius*(sweepDeg/360) * 0.86; // ~14% padding
-      ctx.font = `600 ${fontSize}px Manrope`;
-      const minFont = 7;
-      while(ctx.measureText(label).width > availableArc && fontSize > minFont){
-        fontSize -= 0.5;
-        ctx.font = `600 ${fontSize}px Manrope`;
-      }
-
+      ctx.font = `600 ${seg.fontSize}px Manrope`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(label, 0, 0);
+      ctx.fillText(seg.label, 0, 0);
       ctx.restore();
     });
 
