@@ -2741,8 +2741,8 @@
       loadBtn.className = 'btn small primary'; loadBtn.textContent = 'Load';
       loadBtn.addEventListener('click', async ()=>{
         state = JSON.parse(JSON.stringify(cfg));
+        backfillState(); // a wheel saved with an older app version may be missing newer sound/settings fields — also sets uiPaletteGroup
         el.wheelName.value = state.wheelName;
-        uiPaletteGroup = findGroupForPalette(state.paletteName) || (customPalettes[state.paletteName] ? 'My Palettes' : 'Vibrant');
         await preloadItemImages(state.items);
         syncSettingsUI(); syncSoundUI(); renderPaletteGroupSelect(); renderPaletteGrid();
         renderItems(); drawWheel(); persistState();
