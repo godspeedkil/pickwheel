@@ -2389,6 +2389,12 @@
 
   let whirNodes = null;
   let whirDucked = false; // true while the whir/music is intentionally lingering at low volume behind the winner banner
+  let winSoundNode = null; // the currently-playing win sound, if it's a custom clip (generated variants self-terminate quickly and don't need tracking)
+  function stopWinSound(){
+    if(!winSoundNode) return;
+    try{ winSoundNode.stop(); }catch(e){ /* already stopped/ended — fine */ }
+    winSoundNode = null;
+  }
   function startWhir(force){
     if(!force && !state.sound.music) return;
     if(whirNodes) stopWhir(); // e.g. a previous winner's ducked whir shouldn't linger into a new spin
@@ -2484,6 +2490,7 @@
       const gain = ac.createGain();
       gain.gain.value = winVol * normGainFor(customBuf);
       src.connect(gain); gain.connect(ac.destination);
+      src.onended = ()=>{ if(winSoundNode === src) winSoundNode = null; };
       src.start();
       return src;
     }
@@ -2602,6 +2609,7 @@
     el.spinBtn.textContent = 'STOP';
     el.spinBtn.classList.add('stopping');
     el.winnerBanner.classList.remove('show');
+    stopWinSound();
     playSpinStart();
 
     if(state.settings.randomizeAngle){
@@ -2691,7 +2699,7 @@
     } else {
       stopWhir();
     }
-    playWin();
+    winSoundNode = playWin();
     burstConfetti();
     clearTimeout(flashTimer); // don't let a leftover notice-timer hide this banner early
     el.bannerLabel.textContent = 'Winner';
@@ -2738,6 +2746,7 @@
     clearTimeout(flashTimer);
     el.winnerBanner.classList.remove('show');
     if(whirDucked) stopWhir();
+    stopWinSound();
     startIdleSpin();
   }
   el.winnerBannerClose.addEventListener('click', hideBanner);
