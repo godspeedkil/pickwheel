@@ -1248,6 +1248,8 @@
     const cx = size/2, cy = size/2;
     ctx.clearRect(0,0,size,size);
 
+    el.spinBtn.classList.toggle('hidden', state.items.length === 0);
+
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(deg2rad(currentRotation + state.settings.angle));

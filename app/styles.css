@@ -96,7 +96,7 @@ input, select, textarea{ font-family:inherit; }
 }
 .wheel-wrap{
   position:relative;
-  width: min(72vw, 640px);
+  width: min(100%, 640px);
   aspect-ratio: 1/1;
   margin-top: 6px;
 }
