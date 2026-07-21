@@ -56,7 +56,9 @@ All builds are produced automatically from this repo — see [Building from sour
 - Build and save your own palettes
 
 **Sound**
-- 50+ generated sound effects across three categories (spin whir, tick, win fanfare) — fully synthesized, no audio files required
+- 60+ generated sound effects across four categories (spin whir, tick, win fanfare, spin start) — fully synthesized, no audio files required
+- Independent volume control for each sound category, so you can balance the mix yourself
+- The spin-start sound plays once when you press Spin — not when you stop a spin early
 - Or upload your own clips (multiple per category — one is picked at random each spin), MP3/WAV/OGG and more
 
 **The winner popup**

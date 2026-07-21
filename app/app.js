@@ -94,9 +94,10 @@
     paletteName: 'Carnival',
     settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, labelOverflow: false, labelRawSize: 17, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
     sound: {
-      music: true, tick: true, win: true, volume: 0.7,
-      source: { music: 'generated', tick: 'generated', win: 'generated' },
-      variant: { music: 'classic', tick: 'classic', win: 'classicChime' }
+      music: true, tick: true, win: true, spinStart: true,
+      volumes: { music: 0.45, tick: 0.4, win: 0.55, spinStart: 0.6 },
+      source: { music: 'generated', tick: 'generated', win: 'generated', spinStart: 'generated' },
+      variant: { music: 'classic', tick: 'classic', win: 'classicChime', spinStart: 'quickWhoosh' }
     }
   };
   let savedWheels = {};
@@ -107,19 +108,20 @@
   let uiPaletteGroup = 'Vibrant';
   // colors currently being assembled in the "Build your own" builder
   let paletteDraft = ['#ff5d8f','#4fd9c0','#e8b34c','#7c83fd','#ff8c42'];
-  // user-uploaded clips per category: { music:[{dataURL,name,size},...], tick:[...], win:[...] }
-  let customSounds = { music: [], tick: [], win: [] };
+  // user-uploaded clips per category: { music:[{dataURL,name,size},...], tick:[...], win:[...], spinStart:[...] }
+  let customSounds = { music: [], tick: [], win: [], spinStart: [] };
   // decoded AudioBuffers, in-memory only, same shape/order as customSounds
-  let customBuffers = { music: [], tick: [], win: [] };
+  let customBuffers = { music: [], tick: [], win: [], spinStart: [] };
   // per-item images: itemId -> dataURL. Actual bytes are stored under their own
   // storage key (item-image:<id>) so one huge item image can't crowd out others.
   let itemImages = {};
   const MAX_ITEM_IMAGE_BYTES = 3.5 * 1000 * 1000; // same reasoning as MAX_SOUND_BYTES below
 
   const SOUND_DEFS = [
-    { key: 'music', title: 'Spin whir', desc: 'Ambient sound while the wheel spins' },
-    { key: 'tick',  title: 'Tick',      desc: 'Click as each divider passes the pointer' },
-    { key: 'win',   title: 'Win fanfare', desc: 'Plays when the wheel settles' }
+    { key: 'music',     title: 'Spin whir',   desc: 'Ambient sound while the wheel spins' },
+    { key: 'tick',      title: 'Tick',        desc: 'Click as each divider passes the pointer' },
+    { key: 'win',       title: 'Win fanfare', desc: 'Plays when the wheel settles' },
+    { key: 'spinStart', title: 'Spin start',  desc: 'Plays once when you press Spin (not when you stop it early)' }
   ];
   const MAX_SOUND_BYTES = 3.5 * 1000 * 1000; // per-clip cap (raw bytes) — the largest that still fits
                                               // under the platform's 5MB-per-key storage ceiling once
@@ -854,7 +856,88 @@
     }}
   ];
 
-  const VARIANT_SETS = { music: MUSIC_VARIANTS, tick: TICK_VARIANTS, win: WIN_VARIANTS };
+  // One-shot spin-start variants. play(ac, volume) fires immediately, same shape as TICK_VARIANTS.
+  const SPIN_START_VARIANTS = [
+    { id:'quickWhoosh', name:'Quick Whoosh', play(ac, vol){
+      const noise = createNoiseSource(ac);
+      const filter = ac.createBiquadFilter(); filter.type = 'bandpass'; filter.Q.value = 0.9;
+      const gain = ac.createGain();
+      noise.connect(filter); filter.connect(gain); gain.connect(ac.destination);
+      const t = ac.currentTime;
+      filter.frequency.setValueAtTime(300, t);
+      filter.frequency.exponentialRampToValueAtTime(2400, t+0.22);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(vol*0.32, t+0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t+0.26);
+      noise.start(t); noise.stop(t+0.28);
+    }},
+    { id:'powerUp', name:'Power Up', play(ac, vol){
+      const osc = ac.createOscillator(); const gain = ac.createGain();
+      osc.type = 'sawtooth';
+      osc.connect(gain); gain.connect(ac.destination);
+      const t = ac.currentTime;
+      osc.frequency.setValueAtTime(160, t);
+      osc.frequency.exponentialRampToValueAtTime(720, t+0.3);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(vol*0.28, t+0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t+0.32);
+      osc.start(t); osc.stop(t+0.33);
+    }},
+    { id:'countIn', name:'Count-In Beeps', play(ac, vol){
+      [660,660,880].forEach((f,i)=>{
+        const osc = ac.createOscillator(); const gain = ac.createGain();
+        osc.type = 'sine'; osc.frequency.value = f;
+        const t = ac.currentTime+i*0.13;
+        gain.gain.setValueAtTime(vol*0.28, t);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t+0.09);
+        osc.connect(gain); gain.connect(ac.destination);
+        osc.start(t); osc.stop(t+0.1);
+      });
+    }},
+    { id:'snapClick', name:'Snap Click', play(ac, vol){
+      const osc = ac.createOscillator(); const gain = ac.createGain();
+      osc.type = 'square'; osc.frequency.value = 2200;
+      osc.connect(gain); gain.connect(ac.destination);
+      const t = ac.currentTime;
+      gain.gain.setValueAtTime(vol*0.3, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t+0.045);
+      osc.start(t); osc.stop(t+0.05);
+    }},
+    { id:'risingSweep', name:'Rising Sweep', play(ac, vol){
+      const osc = ac.createOscillator(); const gain = ac.createGain();
+      const lfo = ac.createOscillator(); const lfoGain = ac.createGain();
+      osc.type = 'triangle';
+      lfo.type = 'sine'; lfo.frequency.value = 22; lfoGain.gain.value = 18;
+      lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+      osc.connect(gain); gain.connect(ac.destination);
+      const t = ac.currentTime;
+      osc.frequency.setValueAtTime(220, t);
+      osc.frequency.exponentialRampToValueAtTime(880, t+0.35);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(vol*0.3, t+0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t+0.4);
+      lfo.start(t); lfo.stop(t+0.4);
+      osc.start(t); osc.stop(t+0.42);
+    }},
+    { id:'drumHit', name:'Drum Hit', play(ac, vol){
+      const noise = createNoiseSource(ac);
+      const filter = ac.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = 350;
+      const gain = ac.createGain();
+      noise.connect(filter); filter.connect(gain); gain.connect(ac.destination);
+      const t = ac.currentTime;
+      gain.gain.setValueAtTime(vol*0.45, t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t+0.16);
+      noise.start(t); noise.stop(t+0.18);
+      const osc = ac.createOscillator(); const oGain = ac.createGain();
+      osc.type = 'sine'; osc.frequency.setValueAtTime(140, t); osc.frequency.exponentialRampToValueAtTime(50, t+0.15);
+      osc.connect(oGain); oGain.connect(ac.destination);
+      oGain.gain.setValueAtTime(vol*0.4, t);
+      oGain.gain.exponentialRampToValueAtTime(0.0001, t+0.18);
+      osc.start(t); osc.stop(t+0.2);
+    }}
+  ];
+
+  const VARIANT_SETS = { music: MUSIC_VARIANTS, tick: TICK_VARIANTS, win: WIN_VARIANTS, spinStart: SPIN_START_VARIANTS };
   function getVariant(key){
     const list = VARIANT_SETS[key];
     return list.find(v=>v.id===state.sound.variant[key]) || list[0];
@@ -919,8 +1002,18 @@
     }catch(e){ customPalettes = {}; }
     await preloadItemImages(state.items);
     // backfill fields that might be missing from state saved by an older version
-    if(!state.sound.source) state.sound.source = { music:'generated', tick:'generated', win:'generated' };
-    if(!state.sound.variant) state.sound.variant = { music:'classic', tick:'classic', win:'classicChime' };
+    if(!state.sound.source) state.sound.source = { music:'generated', tick:'generated', win:'generated', spinStart:'generated' };
+    if(!state.sound.variant) state.sound.variant = { music:'classic', tick:'classic', win:'classicChime', spinStart:'quickWhoosh' };
+    if(typeof state.sound.spinStart !== 'boolean') state.sound.spinStart = true;
+    // migrate from the older single-knob volume format, if present
+    if(!state.sound.volumes){
+      const legacyVol = typeof state.sound.volume === 'number' ? state.sound.volume : 0.7;
+      state.sound.volumes = { music: legacyVol*0.4, tick: legacyVol*0.7, win: legacyVol*0.8 };
+    }
+    delete state.sound.volume;
+    SOUND_DEFS.forEach(d=>{
+      if(typeof state.sound.volumes[d.key] !== 'number') state.sound.volumes[d.key] = 0.5;
+    });
     if(typeof state.settings.randomizeAngle !== 'boolean') state.settings.randomizeAngle = false;
     if(typeof state.settings.labelCharLimit !== 'number') state.settings.labelCharLimit = 32;
     if(typeof state.settings.labelOverflow !== 'boolean') state.settings.labelOverflow = false;
@@ -1036,8 +1129,6 @@
     addPaletteColorBtn: document.getElementById('addPaletteColorBtn'),
     savePaletteBtn: document.getElementById('savePaletteBtn'),
     soundRows: document.getElementById('soundRows'),
-    volRange: document.getElementById('volRange'),
-    volVal: document.getElementById('volVal'),
     saveNameInput: document.getElementById('saveNameInput'),
     saveWheelBtn: document.getElementById('saveWheelBtn'),
     savedList: document.getElementById('savedList'),
@@ -1839,14 +1930,7 @@
   });
 
   /* ============================ SOUNDS ============================ */
-  el.volRange.addEventListener('input', ()=>{
-    state.sound.volume = parseInt(el.volRange.value,10)/100;
-    el.volVal.textContent = el.volRange.value+'%';
-    persistState();
-  });
   function syncSoundUI(){
-    el.volRange.value = Math.round(state.sound.volume*100);
-    el.volVal.textContent = Math.round(state.sound.volume*100)+'%';
     renderSoundControls();
   }
 
@@ -1884,6 +1968,24 @@
       // body: source segmented control, then either a variant picker or a clip manager
       const body = document.createElement('div');
       body.className = 'sound-card-body' + (state.sound[key] ? '' : ' disabled');
+
+      // per-sound volume — each of the three sounds gets its own independent level,
+      // so e.g. the tick can be brought down relative to background music.
+      const volField = document.createElement('div');
+      volField.className = 'field';
+      const volPct = Math.round(state.sound.volumes[key]*100);
+      const volLabel = document.createElement('label');
+      volLabel.innerHTML = `Volume <span class="val">${volPct}%</span>`;
+      const volRange = document.createElement('input');
+      volRange.type = 'range'; volRange.min = 0; volRange.max = 100; volRange.step = 1;
+      volRange.value = volPct;
+      volRange.addEventListener('input', ()=>{
+        state.sound.volumes[key] = parseInt(volRange.value,10)/100;
+        volLabel.querySelector('.val').textContent = volRange.value+'%';
+        persistState();
+      });
+      volField.append(volLabel, volRange);
+      body.appendChild(volField);
 
       const seg = document.createElement('div');
       seg.className = 'seg';
@@ -2097,7 +2199,8 @@
       return;
     }
 
-    const src = key === 'tick' ? playTick(true) : playWin(true);
+    const oneShotPlayers = { tick: playTick, win: playWin, spinStart: playSpinStart };
+    const src = oneShotPlayers[key](true);
     if(src){ // a custom clip is playing — make sure it can't run past the cap
       const capMs = Math.min(PREVIEW_MAX_MS, src.buffer.duration*1000);
       previewStop = ()=> src.stop();
@@ -2126,6 +2229,7 @@
     gain.connect(ac.destination);
 
     const customBuf = state.sound.source.music === 'custom' ? pickRandomBuffer('music') : null;
+    const musicVol = state.sound.volumes.music;
 
     if(customBuf){
       const src = ac.createBufferSource();
@@ -2133,14 +2237,14 @@
       src.loop = true;
       src.connect(gain);
       src.start();
-      gain.gain.linearRampToValueAtTime(state.sound.volume*0.5, ac.currentTime + 0.3);
+      gain.gain.linearRampToValueAtTime(musicVol, ac.currentTime + 0.3);
       whirNodes = { type: 'custom', src, gain };
     } else {
       const variant = getVariant('music');
       const built = variant.build(ac);
       built.output.connect(gain);
       built.sources.forEach(s=> s.start());
-      gain.gain.linearRampToValueAtTime(state.sound.volume*0.3, ac.currentTime + 0.3);
+      gain.gain.linearRampToValueAtTime(musicVol, ac.currentTime + 0.3);
       whirNodes = { type: 'generated', built, gain };
     }
   }
@@ -2170,32 +2274,51 @@
     if(!force && !state.sound.tick) return null;
     const ac = audioCtx();
     const customBuf = state.sound.source.tick === 'custom' ? pickRandomBuffer('tick') : null;
+    const tickVol = state.sound.volumes.tick;
     if(customBuf){
       const src = ac.createBufferSource();
       src.buffer = customBuf;
       const gain = ac.createGain();
-      gain.gain.value = state.sound.volume*0.7;
+      gain.gain.value = tickVol;
       src.connect(gain); gain.connect(ac.destination);
       src.start();
       return src;
     }
-    getVariant('tick').play(ac, state.sound.volume);
+    getVariant('tick').play(ac, tickVol);
     return null;
   }
   function playWin(force){
     if(!force && !state.sound.win) return null;
     const ac = audioCtx();
     const customBuf = state.sound.source.win === 'custom' ? pickRandomBuffer('win') : null;
+    const winVol = state.sound.volumes.win;
     if(customBuf){
       const src = ac.createBufferSource();
       src.buffer = customBuf;
       const gain = ac.createGain();
-      gain.gain.value = state.sound.volume*0.8;
+      gain.gain.value = winVol;
       src.connect(gain); gain.connect(ac.destination);
       src.start();
       return src;
     }
-    getVariant('win').play(ac, state.sound.volume);
+    getVariant('win').play(ac, winVol);
+    return null;
+  }
+  function playSpinStart(force){
+    if(!force && !state.sound.spinStart) return null;
+    const ac = audioCtx();
+    const customBuf = state.sound.source.spinStart === 'custom' ? pickRandomBuffer('spinStart') : null;
+    const startVol = state.sound.volumes.spinStart;
+    if(customBuf){
+      const src = ac.createBufferSource();
+      src.buffer = customBuf;
+      const gain = ac.createGain();
+      gain.gain.value = startVol;
+      src.connect(gain); gain.connect(ac.destination);
+      src.start();
+      return src;
+    }
+    getVariant('spinStart').play(ac, startVol);
     return null;
   }
 
@@ -2293,6 +2416,7 @@
     el.spinBtn.textContent = 'STOP';
     el.spinBtn.classList.add('stopping');
     el.winnerBanner.classList.remove('show');
+    playSpinStart();
 
     if(state.settings.randomizeAngle){
       state.settings.angle = Math.floor(Math.random()*360);
