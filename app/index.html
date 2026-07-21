@@ -140,6 +140,15 @@ Burgers, 2"></textarea>
               <label>Label length on wheel <span class="val" id="labelLimitVal">32 chars</span></label>
               <input type="range" id="labelLimitRange" min="10" max="50" step="1" value="32">
             </div>
+            <div class="field">
+              <label>Wheel text size <span class="val" id="labelRawSizeVal">17px</span></label>
+              <input type="range" id="labelRawSizeRange" min="8" max="40" step="1" value="17">
+              <small>The size every slice's label targets. On a packed wheel, this may still shrink to fit its own slice — unless you allow overflow below.</small>
+            </div>
+            <div class="switch-row" style="border-bottom:none; padding-top:0; margin-bottom:16px;">
+              <div class="lbl">Allow text to overflow<small>Lets a slice's label spill into neighboring slices or past the rim instead of shrinking to fit — trades containment for legibility on a heavily populated wheel.</small></div>
+              <label class="switch"><input type="checkbox" id="labelOverflow"><span class="track"></span></label>
+            </div>
           </div>
 
           <div class="settings-page" data-page="banner">

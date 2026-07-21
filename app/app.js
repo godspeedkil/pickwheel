@@ -92,7 +92,7 @@
       { id: id(), label: 'Burgers', weight: 2, color: null, image: null }
     ],
     paletteName: 'Carnival',
-    settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
+    settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, labelOverflow: false, labelRawSize: 17, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
     sound: {
       music: true, tick: true, win: true, volume: 0.7,
       source: { music: 'generated', tick: 'generated', win: 'generated' },
@@ -923,6 +923,8 @@
     if(!state.sound.variant) state.sound.variant = { music:'classic', tick:'classic', win:'classicChime' };
     if(typeof state.settings.randomizeAngle !== 'boolean') state.settings.randomizeAngle = false;
     if(typeof state.settings.labelCharLimit !== 'number') state.settings.labelCharLimit = 32;
+    if(typeof state.settings.labelOverflow !== 'boolean') state.settings.labelOverflow = false;
+    if(typeof state.settings.labelRawSize !== 'number') state.settings.labelRawSize = 17;
     if(typeof state.settings.idleSpin !== 'boolean') state.settings.idleSpin = true;
     if(!state.settings.bannerImageLayout) state.settings.bannerImageLayout = 'left';
     if(!state.settings.bannerImageFit) state.settings.bannerImageFit = 'contain';
@@ -1016,6 +1018,9 @@
     easingSelect: document.getElementById('easingSelect'),
     labelLimitRange: document.getElementById('labelLimitRange'),
     labelLimitVal: document.getElementById('labelLimitVal'),
+    labelRawSizeRange: document.getElementById('labelRawSizeRange'),
+    labelRawSizeVal: document.getElementById('labelRawSizeVal'),
+    labelOverflow: document.getElementById('labelOverflow'),
     bannerImageLayout: document.getElementById('bannerImageLayout'),
     bannerImageFit: document.getElementById('bannerImageFit'),
     bannerImageOpacityRange: document.getElementById('bannerImageOpacityRange'),
@@ -1124,7 +1129,6 @@
   let currentRotation = 0; // degrees, accumulates forever
 
   const IDLE_SPIN_DEG_PER_SEC = 6; // slow, ~1 full turn per minute — looks-only
-  const BASE_LABEL_FONT_SIZE = 17; // was 15 — bumped up alongside the larger wheel/UI
   const MIN_LABEL_FONT_SIZE = 8;   // was 7
   let idleRafId = null;
   let idleLastTime = null;
@@ -1180,7 +1184,7 @@
     const size = el.canvas.clientWidth;
     const r = size/2 - 8;
     const segs = segmentGeometry(); // always fresh: correct color every time, and cheap to compute
-    const settingsKey = state.settings.labelCharLimit + '::' + size;
+    const settingsKey = state.settings.labelCharLimit + '::' + state.settings.labelRawSize + '::' + state.settings.labelOverflow + '::' + size;
 
     segs.forEach(seg=>{
       const sweepDeg = seg.end - seg.start;
@@ -1192,52 +1196,53 @@
         seg.label = cached.label;
         seg.fontSize = cached.fontSize;
         seg.labelRadius = cached.labelRadius;
+        seg.skipClip = cached.skipClip;
         return;
       }
 
-      // Every slice targets the same base font size. Text is truncated per
-      // the user's own label-length setting, then shrunk further below if
-      // it doesn't actually fit this specific slice's available arc — that
-      // safety net (using real measured width, not a guess) is what keeps
-      // text from bleeding radially past the rim or into a neighboring
-      // slice, regardless of how thin the slice is.
       const label = truncate(seg.item.label || '—', state.settings.labelCharLimit);
-      let baseFontSize = BASE_LABEL_FONT_SIZE;
+      let fontSize, skipClip;
 
-      // a length-based reduction on top, so longer names start smaller
-      let fontSize = label.length <= 12 ? baseFontSize
-        : baseFontSize * Math.max(0.5, 1 - (label.length-12)*0.03);
+      if(state.settings.labelOverflow){
+        // Manual mode: render at exactly the raw size the user chose, every
+        // time, with no automatic shrinking and no per-slice clip — text is
+        // free to spill into neighboring slices or past the rim. This trades
+        // away the earlier anti-overflow guarantees on purpose, in exchange
+        // for full manual control over how legible a packed wheel looks.
+        fontSize = state.settings.labelRawSize;
+        skipClip = true;
+      } else {
+        // Contained mode (default): same raw size as the target, but a
+        // length-based reduction for long names, then shrunk further (using
+        // real measured width, not a guess) until it actually fits this
+        // specific slice's available arc — this is what keeps thin slices
+        // from overflowing into neighbors regardless of label length.
+        const baseFontSize = state.settings.labelRawSize;
+        fontSize = label.length <= 12 ? baseFontSize
+          : baseFontSize * Math.max(0.5, 1 - (label.length-12)*0.03);
 
-      // finally, shrink further (using real measured width, not a guess)
-      // until it actually fits the arc length this specific slice has
-      // available — this is what keeps thin slices from overflowing into
-      // neighbors regardless of label length
-      const availableArc = 2*Math.PI*labelRadius*(sweepDeg/360) * 0.86; // ~14% padding
-      ctx.font = `600 ${fontSize}px Manrope`;
-      const minFont = MIN_LABEL_FONT_SIZE;
-      while(ctx.measureText(label).width > availableArc && fontSize > minFont){
-        fontSize -= 0.5;
+        const availableArc = 2*Math.PI*labelRadius*(sweepDeg/360) * 0.86; // ~14% padding
         ctx.font = `600 ${fontSize}px Manrope`;
-      }
-      // the loop's floor check happens BEFORE each decrement, so the
-      // decrement itself can overshoot past minFont in that same step —
-      // clamp it back so the floor is always exactly minFont, consistently,
-      // regardless of which font size this slice happened to start from.
-      // Without this, uniform and fit mode could land on two different
-      // "overshot" floor values for the very same slice (fit mode's boosted
-      // starting point lands on a different point of the 0.5px grid than
-      // uniform's fixed 15px does), which could make a slice with a HIGHER
-      // starting size in fit mode end up rendering SMALLER than uniform —
-      // exactly backwards from what this setting is supposed to do.
-      if(fontSize < minFont){
-        fontSize = minFont;
-        ctx.font = `600 ${fontSize}px Manrope`;
+        const minFont = MIN_LABEL_FONT_SIZE;
+        while(ctx.measureText(label).width > availableArc && fontSize > minFont){
+          fontSize -= 0.5;
+          ctx.font = `600 ${fontSize}px Manrope`;
+        }
+        // the loop's floor check happens BEFORE each decrement, so the
+        // decrement itself can overshoot past minFont in that same step —
+        // clamp it back so the floor is always exactly minFont, consistently.
+        if(fontSize < minFont){
+          fontSize = minFont;
+          ctx.font = `600 ${fontSize}px Manrope`;
+        }
+        skipClip = false;
       }
 
       seg.label = label;
       seg.fontSize = fontSize;
       seg.labelRadius = labelRadius;
-      labelSizeCache.set(seg.item.id, { key: itemKey, label, fontSize, labelRadius });
+      seg.skipClip = skipClip;
+      labelSizeCache.set(seg.item.id, { key: itemKey, label, fontSize, labelRadius, skipClip });
     });
 
     return { r, segs };
@@ -1269,9 +1274,14 @@
       return;
     }
 
+    // Two passes: every slice's fill+stroke first, then every label on top.
+    // This matters once "allow overflow" is on — a segment's spilling text
+    // needs to sit above ALL fills, not just the ones drawn before it in
+    // segment order, or overflow would only be visible in one direction.
     segs.forEach(seg=>{
       const a0 = deg2rad(seg.start - 90); // -90 so 0deg (top) draws correctly before rotation applied
       const a1 = deg2rad(seg.end - 90);
+      seg._a0 = a0; seg._a1 = a1;
       ctx.beginPath();
       ctx.moveTo(0,0);
       ctx.arc(0,0,r,a0,a1);
@@ -1281,19 +1291,25 @@
       ctx.lineWidth = 2;
       ctx.strokeStyle = 'rgba(20,18,31,0.55)';
       ctx.stroke();
+    });
 
-      // label — clipped to this slice's own wedge so text can never bleed
-      // radially past the rim or angularly into a neighboring slice, no
-      // matter how long the name or how thin the slice is. Label text and
-      // font size were already computed (and cached) in getWheelLayout() —
-      // this just paints them at the current rotation, cheaply, every frame.
+    segs.forEach(seg=>{
+      // label — normally clipped to this slice's own wedge so text can
+      // never bleed radially past the rim or angularly into a neighboring
+      // slice. If "allow overflow" is on, that clip is skipped entirely so
+      // text can render at the user's chosen raw size regardless of how
+      // thin the slice actually is. Label text and font size were already
+      // computed (and cached) in getWheelLayout() — this just paints them
+      // at the current rotation, cheaply, every frame.
       const mid = deg2rad((seg.start+seg.end)/2 - 90);
       ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(0,0);
-      ctx.arc(0,0,r,a0,a1);
-      ctx.closePath();
-      ctx.clip();
+      if(!seg.skipClip){
+        ctx.beginPath();
+        ctx.moveTo(0,0);
+        ctx.arc(0,0,r,seg._a0,seg._a1);
+        ctx.closePath();
+        ctx.clip();
+      }
 
       ctx.rotate(mid);
       ctx.translate(seg.labelRadius, 0);
@@ -1573,6 +1589,9 @@
     el.idleSpin.checked = state.settings.idleSpin;
     el.labelLimitRange.value = state.settings.labelCharLimit;
     el.labelLimitVal.textContent = state.settings.labelCharLimit+' chars';
+    el.labelRawSizeRange.value = state.settings.labelRawSize;
+    el.labelRawSizeVal.textContent = state.settings.labelRawSize+'px';
+    el.labelOverflow.checked = state.settings.labelOverflow;
     el.bannerImageLayout.value = state.settings.bannerImageLayout;
     el.bannerImageFit.value = state.settings.bannerImageFit;
     el.bannerImageOpacityRange.value = Math.round(state.settings.bannerImageOpacity*100);
@@ -1609,6 +1628,15 @@
   el.labelLimitRange.addEventListener('input', ()=>{
     state.settings.labelCharLimit = parseInt(el.labelLimitRange.value, 10);
     el.labelLimitVal.textContent = state.settings.labelCharLimit+' chars';
+    drawWheel(); persistState();
+  });
+  el.labelRawSizeRange.addEventListener('input', ()=>{
+    state.settings.labelRawSize = parseInt(el.labelRawSizeRange.value, 10);
+    el.labelRawSizeVal.textContent = state.settings.labelRawSize+'px';
+    drawWheel(); persistState();
+  });
+  el.labelOverflow.addEventListener('change', ()=>{
+    state.settings.labelOverflow = el.labelOverflow.checked;
     drawWheel(); persistState();
   });
 
