@@ -205,6 +205,27 @@ Burgers, 2"></textarea>
         <div class="tab-panel" id="tab-sounds">
           <h3 class="panel-title">Sound design</h3>
           <p class="panel-sub">Pick from a library of generated sounds, or upload your own clips (MP3, WAV, OGG, and more — up to 25 clips, ~3.5MB each) and one plays at random each spin.</p>
+
+          <div class="sound-card" style="margin-bottom:14px;">
+            <div class="sound-card-top">
+              <div class="lbl">Avoid repeating custom clips<small>Favors clips that haven't played recently, so everything gets a turn without back-to-back repeats</small></div>
+              <label class="switch">
+                <input type="checkbox" id="recencyWeightToggle">
+                <span class="track"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="sound-card" style="margin-bottom:14px;">
+            <div class="sound-card-top">
+              <div class="lbl">Normalize custom clip volume<small>Automatically evens out loud and quiet clips so no single one jumps out — no more pre-editing in Audacity</small></div>
+              <label class="switch">
+                <input type="checkbox" id="normalizeCustomToggle">
+                <span class="track"></span>
+              </label>
+            </div>
+          </div>
+
           <div id="soundRows"></div>
         </div>
 

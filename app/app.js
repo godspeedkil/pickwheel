@@ -95,6 +95,7 @@
     settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, labelOverflow: false, labelRawSize: 17, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
     sound: {
       music: true, tick: true, win: true, spinStart: true,
+      duckOnWin: false, duckLevel: 0.3, recencyWeighted: true, normalizeCustom: true,
       volumes: { music: 0.45, tick: 0.4, win: 0.55, spinStart: 0.6 },
       source: { music: 'generated', tick: 'generated', win: 'generated', spinStart: 'generated' },
       variant: { music: 'classic', tick: 'classic', win: 'classicChime', spinStart: 'quickWhoosh' }
@@ -1005,6 +1006,10 @@
     if(!state.sound.source) state.sound.source = { music:'generated', tick:'generated', win:'generated', spinStart:'generated' };
     if(!state.sound.variant) state.sound.variant = { music:'classic', tick:'classic', win:'classicChime', spinStart:'quickWhoosh' };
     if(typeof state.sound.spinStart !== 'boolean') state.sound.spinStart = true;
+    if(typeof state.sound.duckOnWin !== 'boolean') state.sound.duckOnWin = false;
+    if(typeof state.sound.duckLevel !== 'number') state.sound.duckLevel = 0.3;
+    if(typeof state.sound.recencyWeighted !== 'boolean') state.sound.recencyWeighted = true;
+    if(typeof state.sound.normalizeCustom !== 'boolean') state.sound.normalizeCustom = true;
     // migrate from the older single-knob volume format, if present
     if(!state.sound.volumes){
       const legacyVol = typeof state.sound.volume === 'number' ? state.sound.volume : 0.7;
@@ -1129,6 +1134,8 @@
     addPaletteColorBtn: document.getElementById('addPaletteColorBtn'),
     savePaletteBtn: document.getElementById('savePaletteBtn'),
     soundRows: document.getElementById('soundRows'),
+    recencyWeightToggle: document.getElementById('recencyWeightToggle'),
+    normalizeCustomToggle: document.getElementById('normalizeCustomToggle'),
     saveNameInput: document.getElementById('saveNameInput'),
     saveWheelBtn: document.getElementById('saveWheelBtn'),
     savedList: document.getElementById('savedList'),
@@ -1927,7 +1934,17 @@
   });
 
   /* ============================ SOUNDS ============================ */
+  el.recencyWeightToggle.addEventListener('change', ()=>{
+    state.sound.recencyWeighted = el.recencyWeightToggle.checked;
+    persistState();
+  });
+  el.normalizeCustomToggle.addEventListener('change', ()=>{
+    state.sound.normalizeCustom = el.normalizeCustomToggle.checked;
+    persistState();
+  });
   function syncSoundUI(){
+    el.recencyWeightToggle.checked = state.sound.recencyWeighted;
+    el.normalizeCustomToggle.checked = state.sound.normalizeCustom;
     renderSoundControls();
   }
 
@@ -1983,6 +2000,49 @@
       });
       volField.append(volLabel, volRange);
       body.appendChild(volField);
+
+      // "keep playing behind the winner" only makes sense for the spin whir/music —
+      // ticks and the win fanfare are one-shots, and this one setting decides
+      // whether the whir fades out completely at the winner moment or lingers
+      // quietly in the background until the winner banner is dismissed.
+      if(key === 'music'){
+        const duckTop = document.createElement('div');
+        duckTop.className = 'sound-card-top';
+        duckTop.style.marginTop = '4px';
+        const duckLbl = document.createElement('div');
+        duckLbl.className = 'lbl';
+        duckLbl.innerHTML = 'Keep playing behind winner<small>Fades to a lower volume instead of stopping, until you dismiss the winner popup</small>';
+        const duckSwitchLabel = document.createElement('label');
+        duckSwitchLabel.className = 'switch';
+        const duckCb = document.createElement('input');
+        duckCb.type = 'checkbox'; duckCb.checked = state.sound.duckOnWin;
+        duckCb.addEventListener('change', ()=>{
+          state.sound.duckOnWin = duckCb.checked;
+          persistState();
+          duckLevelField.classList.toggle('disabled', !duckCb.checked);
+        });
+        const duckTrack = document.createElement('span'); duckTrack.className = 'track';
+        duckSwitchLabel.append(duckCb, duckTrack);
+        duckTop.append(duckLbl, duckSwitchLabel);
+        body.appendChild(duckTop);
+
+        const duckLevelField = document.createElement('div');
+        duckLevelField.className = 'field' + (state.sound.duckOnWin ? '' : ' disabled');
+        const duckPct = Math.round(state.sound.duckLevel*100);
+        const duckLevelLabel = document.createElement('label');
+        duckLevelLabel.innerHTML = `Winner background volume <span class="val">${duckPct}%</span>`;
+        const duckLevelRange = document.createElement('input');
+        duckLevelRange.type = 'range'; duckLevelRange.min = 5; duckLevelRange.max = 80; duckLevelRange.step = 1;
+        duckLevelRange.value = duckPct;
+        duckLevelRange.addEventListener('input', ()=>{
+          state.sound.duckLevel = parseInt(duckLevelRange.value,10)/100;
+          duckLevelLabel.querySelector('.val').textContent = duckLevelRange.value+'%';
+          persistState();
+          if(whirDucked) duckWhir(); // live-adjust if a winner is currently showing
+        });
+        duckLevelField.append(duckLevelLabel, duckLevelRange);
+        body.appendChild(duckLevelField);
+      }
 
       const seg = document.createElement('div');
       seg.className = 'seg';
@@ -2133,6 +2193,7 @@
     const [removed] = customSounds[key].splice(idx, 1);
     if(customBuffers[key]) customBuffers[key].splice(idx, 1);
     if(removed) deleteClipStorage(removed.id);
+    if(removed && clipLastPicked[key]) delete clipLastPicked[key][removed.id];
     if(customSounds[key].length === 0 && state.sound.source[key] === 'custom'){
       state.sound.source[key] = 'generated';
     }
@@ -2147,11 +2208,39 @@
     return bytes.buffer;
   }
 
+  // Custom clips vary wildly in recording loudness — rather than asking people to
+  // pre-compress them in an external editor, measure each clip's peak level once
+  // on decode and cache a compensating gain (AudioBuffer -> factor). Peak-based
+  // (not full loudness/LUFS) is deliberate: it's cheap, has no external
+  // dependency, and is enough to stop one clip from jumping out over the others.
+  const clipNormGain = new WeakMap();
+  const NORM_TARGET_PEAK = 0.85;
+  function computeNormGain(buffer){
+    if(!buffer) return 1;
+    let peak = 0;
+    for(let ch = 0; ch < buffer.numberOfChannels; ch++){
+      const data = buffer.getChannelData(ch);
+      // sampling rather than scanning every frame keeps this cheap even for longer clips
+      const step = Math.max(1, Math.floor(data.length / 20000));
+      for(let i = 0; i < data.length; i += step){
+        const v = Math.abs(data[i]);
+        if(v > peak) peak = v;
+      }
+    }
+    if(peak < 0.001) return 1; // near-silent/empty — don't blow it up trying to normalize noise
+    return Math.min(3, Math.max(0.2, NORM_TARGET_PEAK / peak));
+  }
+  function normGainFor(buffer){
+    if(!buffer || !state.sound.normalizeCustom) return 1;
+    return clipNormGain.get(buffer) || 1;
+  }
   async function decodeClipBuffer(clip){
     try{
       const ac = getCtx();
       const arr = dataURLToArrayBuffer(clip.dataURL);
-      return await ac.decodeAudioData(arr);
+      const buf = await ac.decodeAudioData(arr);
+      clipNormGain.set(buf, computeNormGain(buf));
+      return buf;
     }catch(e){
       console.error('could not decode clip', e);
       return null;
@@ -2166,10 +2255,42 @@
       }
     }
   }
+  // Per-key logical clock + last-picked tick per clip id, used to softly penalize
+  // recently-played clips rather than repeating a small pool back-to-back.
+  // In-memory only — resets on reload, which is fine since it's just about feel
+  // within a session, not a persisted requirement.
+  let clipPickCounter = { music: 0, tick: 0, win: 0, spinStart: 0 };
+  let clipLastPicked = { music: {}, tick: {}, win: {}, spinStart: {} };
   function pickRandomBuffer(key){
-    const bufs = (customBuffers[key] || []).filter(Boolean);
-    if(bufs.length === 0) return null;
-    return bufs[Math.floor(Math.random()*bufs.length)];
+    const clips = customSounds[key] || [];
+    const bufs = customBuffers[key] || [];
+    const pool = clips.map((clip, i)=> ({ clip, buf: bufs[i] })).filter(p=> p.buf);
+    if(pool.length === 0) return null;
+    if(pool.length === 1 || !state.sound.recencyWeighted){
+      const pick = pool[Math.floor(Math.random()*pool.length)];
+      clipPickCounter[key] = (clipPickCounter[key]||0) + 1;
+      clipLastPicked[key][pick.clip.id] = clipPickCounter[key];
+      return pick.buf;
+    }
+    // weight = 1 + how many picks it's been since this clip last played, capped at
+    // pool.length so a clip that's been silent a long time doesn't dominate forever.
+    // Clips never played yet get the max weight, so everything gets a turn early on.
+    const tick = clipPickCounter[key] || 0;
+    const weights = pool.map(p=>{
+      const last = clipLastPicked[key][p.clip.id];
+      const age = (last === undefined) ? pool.length : Math.min(tick - last, pool.length);
+      return 1 + age;
+    });
+    const total = weights.reduce((a,b)=>a+b, 0);
+    let r = Math.random()*total;
+    let chosen = pool[pool.length-1];
+    for(let i=0;i<pool.length;i++){
+      r -= weights[i];
+      if(r <= 0){ chosen = pool[i]; break; }
+    }
+    clipPickCounter[key] = tick+1;
+    clipLastPicked[key][chosen.clip.id] = clipPickCounter[key];
+    return chosen.buf;
   }
 
   const PREVIEW_MAX_MS = 5000;
@@ -2218,8 +2339,11 @@
   }
 
   let whirNodes = null;
+  let whirDucked = false; // true while the whir/music is intentionally lingering at low volume behind the winner banner
   function startWhir(force){
     if(!force && !state.sound.music) return;
+    if(whirNodes) stopWhir(); // e.g. a previous winner's ducked whir shouldn't linger into a new spin
+    whirDucked = false;
     const ac = audioCtx();
     const gain = ac.createGain();
     gain.gain.value = 0;
@@ -2227,6 +2351,7 @@
 
     const customBuf = state.sound.source.music === 'custom' ? pickRandomBuffer('music') : null;
     const musicVol = state.sound.volumes.music;
+    const normGain = customBuf ? normGainFor(customBuf) : 1;
 
     if(customBuf){
       const src = ac.createBufferSource();
@@ -2234,15 +2359,15 @@
       src.loop = true;
       src.connect(gain);
       src.start();
-      gain.gain.linearRampToValueAtTime(musicVol, ac.currentTime + 0.3);
-      whirNodes = { type: 'custom', src, gain };
+      gain.gain.linearRampToValueAtTime(musicVol * normGain, ac.currentTime + 0.3);
+      whirNodes = { type: 'custom', src, gain, normGain };
     } else {
       const variant = getVariant('music');
       const built = variant.build(ac);
       built.output.connect(gain);
       built.sources.forEach(s=> s.start());
       gain.gain.linearRampToValueAtTime(musicVol, ac.currentTime + 0.3);
-      whirNodes = { type: 'generated', built, gain };
+      whirNodes = { type: 'generated', built, gain, normGain: 1 };
     }
   }
   function updateWhir(speedFactor){ // speedFactor 0..1
@@ -2257,6 +2382,8 @@
   function stopWhir(){
     if(!whirNodes) return;
     const ac = audioCtx();
+    whirNodes.gain.gain.cancelScheduledValues(ac.currentTime);
+    whirNodes.gain.gain.setValueAtTime(whirNodes.gain.gain.value, ac.currentTime);
     whirNodes.gain.gain.linearRampToValueAtTime(0, ac.currentTime + 0.35);
     const nodes = whirNodes;
     setTimeout(()=>{
@@ -2266,6 +2393,19 @@
       }catch(e){}
     }, 500);
     whirNodes = null;
+    whirDucked = false;
+  }
+  // Instead of stopping the whir/music at the winner moment, fade it down to a low
+  // background level and leave it playing — used when "keep music playing behind
+  // the winner" is enabled. stopWhir() (called from hideBanner) cleans it up for real.
+  function duckWhir(){
+    if(!whirNodes) return;
+    const ac = audioCtx();
+    const target = state.sound.volumes.music * state.sound.duckLevel * (whirNodes.normGain || 1);
+    whirNodes.gain.gain.cancelScheduledValues(ac.currentTime);
+    whirNodes.gain.gain.setValueAtTime(whirNodes.gain.gain.value, ac.currentTime);
+    whirNodes.gain.gain.linearRampToValueAtTime(target, ac.currentTime + 0.5);
+    whirDucked = true;
   }
   function playTick(force){
     if(!force && !state.sound.tick) return null;
@@ -2276,7 +2416,7 @@
       const src = ac.createBufferSource();
       src.buffer = customBuf;
       const gain = ac.createGain();
-      gain.gain.value = tickVol;
+      gain.gain.value = tickVol * normGainFor(customBuf);
       src.connect(gain); gain.connect(ac.destination);
       src.start();
       return src;
@@ -2293,7 +2433,7 @@
       const src = ac.createBufferSource();
       src.buffer = customBuf;
       const gain = ac.createGain();
-      gain.gain.value = winVol;
+      gain.gain.value = winVol * normGainFor(customBuf);
       src.connect(gain); gain.connect(ac.destination);
       src.start();
       return src;
@@ -2310,7 +2450,7 @@
       const src = ac.createBufferSource();
       src.buffer = customBuf;
       const gain = ac.createGain();
-      gain.gain.value = startVol;
+      gain.gain.value = startVol * normGainFor(customBuf);
       src.connect(gain); gain.connect(ac.destination);
       src.start();
       return src;
@@ -2497,7 +2637,11 @@
     rafId = null;
     el.spinBtn.textContent = 'SPIN';
     el.spinBtn.classList.remove('stopping');
-    stopWhir();
+    if(state.sound.duckOnWin && whirNodes){
+      duckWhir();
+    } else {
+      stopWhir();
+    }
     playWin();
     burstConfetti();
     clearTimeout(flashTimer); // don't let a leftover notice-timer hide this banner early
@@ -2543,6 +2687,7 @@
   function hideBanner(){
     clearTimeout(flashTimer);
     el.winnerBanner.classList.remove('show');
+    if(whirDucked) stopWhir();
     startIdleSpin();
   }
   el.winnerBannerClose.addEventListener('click', hideBanner);
