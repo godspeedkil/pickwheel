@@ -20,7 +20,7 @@ Weighted odds, real sound design, per-item images, dozens of color palettes, and
 
 No download needed — the web version runs entirely in your browser, with the same features as the desktop app.
 
-**👉 [Open PickWheel in your browser](https://your-username.github.io/pickwheel/)**
+**👉 [Open PickWheel in your browser](https://godspeedkil.github.io/pickwheel/)**
 
 Your wheels, sounds, and images are saved locally in your browser and never leave your machine.
 
@@ -80,7 +80,7 @@ All builds are produced automatically from this repo — see [Building from sour
 **Requirements:** [Node.js](https://nodejs.org/) 18+ and npm.
 
 ```bash
-git clone https://github.com/your-username/pickwheel.git
+git clone https://github.com/godspeedkil/pickwheel.git
 cd pickwheel
 npm install
 
