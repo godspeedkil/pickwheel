@@ -95,7 +95,7 @@
     settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, labelOverflow: false, labelRawSize: 17, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
     sound: {
       music: true, tick: true, win: true, spinStart: true,
-      duckOnWin: false, duckLevel: 0.3, recencyWeighted: true, normalizeCustom: true,
+      duckOnWin: false, duckLevel: 0.3, recencyWeighted: true, normalizeCustom: true, normalizeTargetPeak: 0.85,
       volumes: { music: 0.45, tick: 0.4, win: 0.55, spinStart: 0.6 },
       source: { music: 'generated', tick: 'generated', win: 'generated', spinStart: 'generated' },
       variant: { music: 'classic', tick: 'classic', win: 'classicChime', spinStart: 'quickWhoosh' }
@@ -1010,6 +1010,7 @@
     if(typeof state.sound.duckLevel !== 'number') state.sound.duckLevel = 0.3;
     if(typeof state.sound.recencyWeighted !== 'boolean') state.sound.recencyWeighted = true;
     if(typeof state.sound.normalizeCustom !== 'boolean') state.sound.normalizeCustom = true;
+    if(typeof state.sound.normalizeTargetPeak !== 'number') state.sound.normalizeTargetPeak = 0.85;
     // migrate from the older single-knob volume format, if present
     if(!state.sound.volumes){
       const legacyVol = typeof state.sound.volume === 'number' ? state.sound.volume : 0.7;
@@ -1136,6 +1137,9 @@
     soundRows: document.getElementById('soundRows'),
     recencyWeightToggle: document.getElementById('recencyWeightToggle'),
     normalizeCustomToggle: document.getElementById('normalizeCustomToggle'),
+    normalizeTargetBody: document.getElementById('normalizeTargetBody'),
+    normalizeTargetRange: document.getElementById('normalizeTargetRange'),
+    normalizeTargetVal: document.getElementById('normalizeTargetVal'),
     saveNameInput: document.getElementById('saveNameInput'),
     saveWheelBtn: document.getElementById('saveWheelBtn'),
     savedList: document.getElementById('savedList'),
@@ -1941,10 +1945,19 @@
   el.normalizeCustomToggle.addEventListener('change', ()=>{
     state.sound.normalizeCustom = el.normalizeCustomToggle.checked;
     persistState();
+    el.normalizeTargetBody.classList.toggle('disabled', !el.normalizeCustomToggle.checked);
+  });
+  el.normalizeTargetRange.addEventListener('input', ()=>{
+    state.sound.normalizeTargetPeak = parseInt(el.normalizeTargetRange.value,10)/100;
+    el.normalizeTargetVal.textContent = el.normalizeTargetRange.value+'%';
+    persistState();
   });
   function syncSoundUI(){
     el.recencyWeightToggle.checked = state.sound.recencyWeighted;
     el.normalizeCustomToggle.checked = state.sound.normalizeCustom;
+    el.normalizeTargetBody.classList.toggle('disabled', !state.sound.normalizeCustom);
+    el.normalizeTargetRange.value = Math.round(state.sound.normalizeTargetPeak*100);
+    el.normalizeTargetVal.textContent = Math.round(state.sound.normalizeTargetPeak*100)+'%';
     renderSoundControls();
   }
 
@@ -2210,13 +2223,14 @@
 
   // Custom clips vary wildly in recording loudness — rather than asking people to
   // pre-compress them in an external editor, measure each clip's peak level once
-  // on decode and cache a compensating gain (AudioBuffer -> factor). Peak-based
-  // (not full loudness/LUFS) is deliberate: it's cheap, has no external
-  // dependency, and is enough to stop one clip from jumping out over the others.
-  const clipNormGain = new WeakMap();
-  const NORM_TARGET_PEAK = 0.85;
-  function computeNormGain(buffer){
-    if(!buffer) return 1;
+  // on decode and cache it (AudioBuffer -> peak, 0..1). The compensating gain is
+  // derived from that cached peak + the user's target-peak slider at playback
+  // time, so dragging the slider re-balances instantly without re-decoding.
+  // Peak-based (not full loudness/LUFS) is deliberate: it's cheap, has no
+  // external dependency, and is enough to stop one clip from jumping out over
+  // the others.
+  const clipPeakLevel = new WeakMap();
+  function measurePeak(buffer){
     let peak = 0;
     for(let ch = 0; ch < buffer.numberOfChannels; ch++){
       const data = buffer.getChannelData(ch);
@@ -2227,19 +2241,20 @@
         if(v > peak) peak = v;
       }
     }
-    if(peak < 0.001) return 1; // near-silent/empty — don't blow it up trying to normalize noise
-    return Math.min(3, Math.max(0.2, NORM_TARGET_PEAK / peak));
+    return peak;
   }
   function normGainFor(buffer){
     if(!buffer || !state.sound.normalizeCustom) return 1;
-    return clipNormGain.get(buffer) || 1;
+    const peak = clipPeakLevel.get(buffer);
+    if(peak === undefined || peak < 0.001) return 1; // unmeasured, or near-silent/empty — don't blow up noise
+    return Math.min(3, Math.max(0.2, state.sound.normalizeTargetPeak / peak));
   }
   async function decodeClipBuffer(clip){
     try{
       const ac = getCtx();
       const arr = dataURLToArrayBuffer(clip.dataURL);
       const buf = await ac.decodeAudioData(arr);
-      clipNormGain.set(buf, computeNormGain(buf));
+      clipPeakLevel.set(buf, measurePeak(buf));
       return buf;
     }catch(e){
       console.error('could not decode clip', e);
