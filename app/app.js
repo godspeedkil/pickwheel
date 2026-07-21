@@ -1078,6 +1078,20 @@
   async function deleteClipStorage(clipId){
     try{ await window.storage.delete('custom-clip:'+clipId); }catch(e){ /* not critical */ }
   }
+  // Looks up a clip's audio data by id wherever it currently lives — the in-memory
+  // pool for the active session first (fast path), then falls back to its own
+  // storage key. Used when resolving a saved wheel's clip references back into
+  // playable clips, and when building a full settings export.
+  async function fetchClipDataURL(clipId){
+    for(const key of Object.keys(customSounds)){
+      const hit = (customSounds[key]||[]).find(c=> c.id === clipId);
+      if(hit) return hit.dataURL;
+    }
+    try{
+      const res = await window.storage.get('custom-clip:'+clipId);
+      return (res && res.value) ? JSON.parse(res.value) : null;
+    }catch(e){ return null; }
+  }
   async function persistCustomPalettes(){
     try{ await window.storage.set('custom-palettes', JSON.stringify(customPalettes)); }catch(e){ console.error('save failed', e); flashMessage('Could not save that palette.', 'Notice'); }
   }
@@ -2215,8 +2229,18 @@
   function removeCustomClip(key, idx){
     const [removed] = customSounds[key].splice(idx, 1);
     if(customBuffers[key]) customBuffers[key].splice(idx, 1);
-    if(removed) deleteClipStorage(removed.id);
-    if(removed && clipLastPicked[key]) delete clipLastPicked[key][removed.id];
+    if(removed){
+      // a clip id can end up referenced by more than one saved wheel (e.g. saving a
+      // wheel, then saving it again under a new name) — only actually delete the
+      // audio bytes if nothing else still points at them, so removing a clip from
+      // this wheel can't silently break another wheel that shares it.
+      const stillReferenced = Object.values(savedWheels).some(w=>{
+        const refs = w.customSounds || {};
+        return SOUND_DEFS.some(d=> (refs[d.key]||[]).some(c=> c.id === removed.id));
+      });
+      if(!stillReferenced) deleteClipStorage(removed.id);
+      if(clipLastPicked[key]) delete clipLastPicked[key][removed.id];
+    }
     if(customSounds[key].length === 0 && state.sound.source[key] === 'custom'){
       state.sound.source[key] = 'generated';
     }
@@ -2736,16 +2760,25 @@
       row.className = 'saved-item';
       const meta = document.createElement('div');
       meta.className = 'meta';
-      meta.innerHTML = `<div class="name">${escapeHtml(name)}</div><div class="sub">${cfg.items.length} item${cfg.items.length===1?'':'s'}</div>`;
+      const clipCount = SOUND_DEFS.reduce((sum,d)=> sum + ((cfg.customSounds && cfg.customSounds[d.key]) ? cfg.customSounds[d.key].length : 0), 0);
+      const clipNote = clipCount ? ` · ${clipCount} custom clip${clipCount===1?'':'s'}` : '';
+      meta.innerHTML = `<div class="name">${escapeHtml(name)}</div><div class="sub">${cfg.items.length} item${cfg.items.length===1?'':'s'}${clipNote}</div>`;
       const loadBtn = document.createElement('button');
       loadBtn.className = 'btn small primary'; loadBtn.textContent = 'Load';
       loadBtn.addEventListener('click', async ()=>{
         state = JSON.parse(JSON.stringify(cfg));
+        // each saved wheel keeps its own clip references (see saveWheelBtn below) —
+        // resolve those back into playable clips instead of leaving whatever custom
+        // sounds happened to be active for the previously-loaded wheel.
+        customSounds = await resolveWheelCustomSounds(cfg);
+        customBuffers = { music: [], tick: [], win: [], spinStart: [] };
+        await decodeAllCustomSounds();
         backfillState(); // a wheel saved with an older app version may be missing newer sound/settings fields — also sets uiPaletteGroup
         el.wheelName.value = state.wheelName;
         await preloadItemImages(state.items);
         syncSettingsUI(); syncSoundUI(); renderPaletteGroupSelect(); renderPaletteGrid();
         renderItems(); drawWheel(); persistState();
+        await persistClipIndex(); // so this wheel's clips are what a page reload picks back up
         if(state.settings.idleSpin) startIdleSpin(); else stopIdleSpin();
         switchTab('items');
       });
@@ -2759,11 +2792,33 @@
       el.savedList.appendChild(row);
     });
   }
+  // Turns a saved wheel's lightweight clip references ({id,name,size}, no audio data)
+  // back into playable clips by pulling each one's bytes from its own storage key.
+  // Refs that no longer resolve (e.g. the clip was since deleted) are quietly skipped.
+  async function resolveWheelCustomSounds(wheelCfg){
+    const resolved = { music: [], tick: [], win: [], spinStart: [] };
+    const refs = wheelCfg.customSounds || {};
+    for(const d of SOUND_DEFS){
+      const list = Array.isArray(refs[d.key]) ? refs[d.key] : [];
+      for(const ref of list){
+        const dataURL = await fetchClipDataURL(ref.id);
+        if(dataURL) resolved[d.key].push({ id: ref.id, name: ref.name, size: ref.size, dataURL });
+      }
+    }
+    return resolved;
+  }
   el.saveWheelBtn.addEventListener('click', ()=>{
     const name = (el.saveNameInput.value || state.wheelName || 'Untitled Wheel').trim();
     if(!name) return;
     savedWheels[name] = JSON.parse(JSON.stringify(state));
     savedWheels[name].wheelName = name;
+    // snapshot which custom clips belong to this wheel — metadata only. The actual
+    // audio bytes already live in their own storage key from when they were
+    // uploaded, so they aren't duplicated into the (size-limited) saved-wheels blob.
+    savedWheels[name].customSounds = {};
+    SOUND_DEFS.forEach(d=>{
+      savedWheels[name].customSounds[d.key] = (customSounds[d.key]||[]).map(c=> ({ id: c.id, name: c.name, size: c.size }));
+    });
     el.saveNameInput.value = '';
     persistSavedWheels(); renderSaved();
   });
@@ -2821,13 +2876,13 @@
     // gather every item image referenced by the active wheel or any saved wheel,
     // pulling from storage anything not already cached in memory, so a restored
     // backup doesn't leave saved wheels with missing pictures
-    const neededIds = new Set();
-    state.items.forEach(it=>{ if(it.image) neededIds.add(it.id); });
+    const neededImageIds = new Set();
+    state.items.forEach(it=>{ if(it.image) neededImageIds.add(it.id); });
     Object.values(savedWheels).forEach(w=>{
-      (w.items||[]).forEach(it=>{ if(it.image) neededIds.add(it.id); });
+      (w.items||[]).forEach(it=>{ if(it.image) neededImageIds.add(it.id); });
     });
     const images = {};
-    for(const itemId of neededIds){
+    for(const itemId of neededImageIds){
       let dataURL = itemImages[itemId];
       if(dataURL === undefined){
         try{
@@ -2838,14 +2893,36 @@
       if(dataURL) images[itemId] = dataURL;
     }
 
+    // Custom sound clips live in their own storage key per clip, referenced by id from
+    // both the active session (customSounds) and each saved wheel's own clip list — not
+    // duplicated inline. For a full backup, resolve every id referenced anywhere into one
+    // flat library carrying the actual audio bytes, so every wheel's own clips survive
+    // an export/import round trip, not just whichever wheel happens to be active.
+    const clipMeta = {}; // id -> {id,name,size}, first metadata we find for it
+    SOUND_DEFS.forEach(d=> (customSounds[d.key]||[]).forEach(c=>{ if(!clipMeta[c.id]) clipMeta[c.id] = { id:c.id, name:c.name, size:c.size }; }));
+    Object.values(savedWheels).forEach(w=>{
+      const refs = w.customSounds || {};
+      SOUND_DEFS.forEach(d=> (refs[d.key]||[]).forEach(c=>{ if(!clipMeta[c.id]) clipMeta[c.id] = { id:c.id, name:c.name, size:c.size }; }));
+    });
+    const clipLibrary = {};
+    for(const clipId of Object.keys(clipMeta)){
+      const dataURL = await fetchClipDataURL(clipId);
+      if(dataURL) clipLibrary[clipId] = { ...clipMeta[clipId], dataURL };
+    }
+    const currentCustomSoundRefs = {};
+    SOUND_DEFS.forEach(d=>{
+      currentCustomSoundRefs[d.key] = (customSounds[d.key]||[]).map(c=> ({ id:c.id, name:c.name, size:c.size }));
+    });
+
     const payload = {
       type: 'pickwheel-settings-backup',
-      version: 1,
+      version: 2,
       exportedAt: new Date().toISOString(),
       state,
       savedWheels,
       customPalettes,
-      customSounds,
+      currentCustomSoundRefs,
+      clipLibrary,
       itemImages: images
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -2887,18 +2964,34 @@
     savedWheels = (payload.savedWheels && typeof payload.savedWheels === 'object') ? payload.savedWheels : {};
     customPalettes = (payload.customPalettes && typeof payload.customPalettes === 'object') ? payload.customPalettes : {};
 
+    itemImages = {};
+    if(payload.itemImages && typeof payload.itemImages === 'object'){
+      Object.keys(payload.itemImages).forEach(k=>{ itemImages[k] = payload.itemImages[k]; });
+    }
+
+    // v2 backups carry a flat clip library (one entry per unique clip, full audio data)
+    // plus lightweight id references from the current session and each saved wheel.
+    // v1 backups (from before per-wheel clip support) only had one flat customSounds
+    // set with the data inline — treat that as both the library and the current refs.
     customSounds = { music: [], tick: [], win: [], spinStart: [] };
     customBuffers = { music: [], tick: [], win: [], spinStart: [] };
-    if(payload.customSounds){
+    if(payload.clipLibrary){
+      for(const clipId of Object.keys(payload.clipLibrary)){
+        await persistClip(payload.clipLibrary[clipId]); // writes custom-clip:<id>
+      }
+      const refs = payload.currentCustomSoundRefs || {};
+      SOUND_DEFS.forEach(d=>{
+        const list = Array.isArray(refs[d.key]) ? refs[d.key] : [];
+        customSounds[d.key] = list.map(ref=>{
+          const lib = payload.clipLibrary[ref.id];
+          return lib ? { id: ref.id, name: lib.name, size: lib.size, dataURL: lib.dataURL } : null;
+        }).filter(Boolean);
+      });
+    } else if(payload.customSounds){ // old v1 backup — flat clips with inline data, no per-wheel refs
       SOUND_DEFS.forEach(d=>{
         const clips = Array.isArray(payload.customSounds[d.key]) ? payload.customSounds[d.key] : [];
         customSounds[d.key] = clips.map(c=> ({ id: c.id || id(), name: c.name, size: c.size, dataURL: c.dataURL }));
       });
-    }
-
-    itemImages = {};
-    if(payload.itemImages && typeof payload.itemImages === 'object'){
-      Object.keys(payload.itemImages).forEach(k=>{ itemImages[k] = payload.itemImages[k]; });
     }
 
     backfillState();
@@ -2908,8 +3001,12 @@
     await persistSavedWheels();
     await persistCustomPalettes();
     await persistClipIndex();
-    for(const d of SOUND_DEFS){
-      for(const clip of customSounds[d.key]){ await persistClip(clip); }
+    if(!payload.clipLibrary){
+      // v1 fallback path — clipLibrary already persists clips itself above, this
+      // only runs for the older flat-customSounds format
+      for(const d of SOUND_DEFS){
+        for(const clip of customSounds[d.key]){ await persistClip(clip); }
+      }
     }
     for(const itemId of Object.keys(itemImages)){
       if(itemImages[itemId]) await persistItemImage(itemId, itemImages[itemId]);
