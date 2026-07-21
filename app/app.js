@@ -1198,18 +1198,39 @@
       ctx.strokeStyle = 'rgba(20,18,31,0.55)';
       ctx.stroke();
 
-      // label
+      // label — clipped to this slice's own wedge so text can never bleed
+      // radially past the rim or angularly into a neighboring slice, no
+      // matter how long the name or how thin the slice is.
       const mid = deg2rad((seg.start+seg.end)/2 - 90);
+      const sweepDeg = seg.end - seg.start;
+      const labelRadius = r*0.62;
       ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(0,0);
+      ctx.arc(0,0,r,a0,a1);
+      ctx.closePath();
+      ctx.clip();
+
       ctx.rotate(mid);
-      ctx.translate(r*0.62, 0);
+      ctx.translate(labelRadius, 0);
       const flip = Math.cos(mid) < -0.02;
       ctx.rotate(flip ? Math.PI : 0);
       ctx.fillStyle = readableTextColor(seg.color);
       const label = truncate(seg.item.label || '—', state.settings.labelCharLimit);
-      // longer labels shrink gracefully instead of overflowing or getting clipped harder
-      const fontSize = label.length <= 12 ? 15 : Math.max(10, 15 - (label.length-12)*0.35);
+
+      // start from a length-based size, then shrink further (using real
+      // measured width, not a guess) until it actually fits the arc length
+      // this specific slice has available — thin slices get smaller text
+      // automatically instead of relying on the clip alone to hide overflow
+      let fontSize = label.length <= 12 ? 15 : Math.max(10, 15 - (label.length-12)*0.35);
+      const availableArc = 2*Math.PI*labelRadius*(sweepDeg/360) * 0.86; // ~14% padding
       ctx.font = `600 ${fontSize}px Manrope`;
+      const minFont = 7;
+      while(ctx.measureText(label).width > availableArc && fontSize > minFont){
+        fontSize -= 0.5;
+        ctx.font = `600 ${fontSize}px Manrope`;
+      }
+
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(label, 0, 0);
