@@ -11,17 +11,24 @@
  * down with it, and writes stay cheap even with many stored images/clips.
  *
  * Where data lives:
- *   - Dev mode (`npm run dev`) or if the packaged app can't write next to
- *     its own executable (e.g. installed to Program Files, or a read-only
- *     volume) -> the standard per-user app-data directory.
- *   - Packaged app, when the folder next to the executable IS writable
- *     (this is the normal case for the portable .exe, the macOS .zip, and
- *     the Linux AppImage, since none of those live in a protected system
- *     folder) -> a "PickWheel-Data" folder right next to the app itself,
- *     so copying the app also copies its data.
- *
- * This one fallback rule handles "installed vs. portable" for all three
- * platforms without needing to special-case build targets.
+ *   - Dev mode (`npm run dev`) -> always the standard per-user app-data
+ *     directory.
+ *   - Windows portable .exe / Linux AppImage -> a "PickWheel-Data" folder
+ *     next to the real, original executable — found via the env vars each
+ *     platform's runtime provides for exactly this purpose
+ *     (PORTABLE_EXECUTABLE_DIR / APPIMAGE), NOT via app.getPath('exe').
+ *     Both of those formats actually run from a temporary extraction/mount
+ *     location that's recreated on every launch, so deriving the folder
+ *     from the running executable's own path would silently point at a
+ *     different, empty temp folder every time — this was a real bug in an
+ *     earlier version of this file.
+ *   - macOS .zip -> a "PickWheel-Data" folder next to the .app bundle,
+ *     found via app.getPath('exe') — this one's safe because unzipping
+ *     just leaves a normal .app on disk with no extraction-on-launch step.
+ *   - Installed builds (NSIS installer, .dmg to /Applications) -> the
+ *     folder-next-to-executable attempt fails (no write access to Program
+ *     Files / a protected volume), so it falls back to the standard
+ *     per-user app-data directory automatically.
  */
 
 const { app } = require("electron");
@@ -35,15 +42,31 @@ function computeDataDir() {
   if (!app.isPackaged) return fallback;
 
   try {
-    const exePath = app.getPath("exe");
     let baseDir;
 
-    if (process.platform === "darwin" && exePath.includes(".app/Contents/MacOS/")) {
-      // .../PickWheel.app/Contents/MacOS/PickWheel -> folder containing PickWheel.app
-      baseDir = path.dirname(path.dirname(path.dirname(path.dirname(exePath))));
+    if (process.env.PORTABLE_EXECUTABLE_DIR) {
+      // Windows portable build: the .exe you actually run is a self-extracting
+      // stub — it unpacks the app into a fresh temp folder on every launch and
+      // runs it from there, so app.getPath('exe') points into that throwaway
+      // temp folder, not to wherever you put PickWheel-Portable.exe. This env
+      // var is what electron-builder itself sets to the *real* location, so
+      // data written here actually survives between launches.
+      baseDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    } else if (process.env.APPIMAGE) {
+      // Linux AppImage: same underlying problem — it runs from a mounted/
+      // extracted temp location — but the AppImage runtime sets APPIMAGE to
+      // the real path of the .AppImage file itself.
+      baseDir = path.dirname(process.env.APPIMAGE);
     } else {
-      // Windows portable .exe or Linux AppImage: the folder it's sitting in
-      baseDir = path.dirname(exePath);
+      // macOS .zip: unzipping just gives a normal .app on disk with no
+      // extraction-on-launch step, so app.getPath('exe') is reliable here.
+      const exePath = app.getPath("exe");
+      if (process.platform === "darwin" && exePath.includes(".app/Contents/MacOS/")) {
+        // .../PickWheel.app/Contents/MacOS/PickWheel -> folder containing PickWheel.app
+        baseDir = path.dirname(path.dirname(path.dirname(path.dirname(exePath))));
+      } else {
+        baseDir = path.dirname(exePath);
+      }
     }
 
     const candidate = path.join(baseDir, "PickWheel-Data");
