@@ -16,8 +16,8 @@
     "build:all": "electron-builder --win --mac --linux"
   },
   "devDependencies": {
-    "electron": "^31.7.7",
-    "electron-builder": "^24.13.3",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
     "png2icons": "^2.0.1"
   },
   "build": {
@@ -35,32 +35,23 @@
       "category": "public.app-category.entertainment",
       "icon": "build/icons/icon.icns",
       "target": [
-        {
-          "target": "dmg"
-        },
-        {
-          "target": "zip"
-        }
+        { "target": "dmg" },
+        { "target": "zip" }
       ]
     },
     "win": {
       "icon": "build/icons/icon.ico",
       "target": [
-        {
-          "target": "nsis"
-        },
-        {
-          "target": "portable"
-        }
+        { "target": "nsis" },
+        { "target": "portable" }
       ]
     },
     "linux": {
       "icon": "build/icons/icon.png",
       "category": "Utility",
+      "desktopName": "pickwheel.desktop",
       "target": [
-        {
-          "target": "AppImage"
-        }
+        { "target": "AppImage" }
       ]
     },
     "nsis": {
