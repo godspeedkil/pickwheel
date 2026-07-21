@@ -1,6 +1,6 @@
 {
   "name": "pickwheel",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "description": "A customizable picker wheel with weighted odds, sound design, and per-item images — desktop app and standalone web app from one codebase.",
   "main": "electron/main.js",
   "author": "",
