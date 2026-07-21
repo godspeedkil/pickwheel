@@ -49,7 +49,6 @@
     "linux": {
       "icon": "build/icons/icon.png",
       "category": "Utility",
-      "desktopName": "pickwheel.desktop",
       "target": [
         { "target": "AppImage" }
       ]
