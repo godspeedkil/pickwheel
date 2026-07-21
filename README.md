@@ -4,11 +4,7 @@
 
 Weighted odds, real sound design, per-item images, dozens of color palettes, and a proper offline desktop app. No account, no server, no ads — everything lives on your own machine.
 
-<!--
-  TODO: replace with a real screenshot or short GIF once the app is built.
-  A 3-4 shot GIF (spin → winner banner → items panel → sounds panel) works well here.
--->
-![PickWheel screenshot](docs/screenshot.png)
+<img width="1238" height="766" alt="pickwheel_1" src="https://github.com/user-attachments/assets/a04b316a-13bf-4903-a44d-43d97999a684" />
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-informational)
