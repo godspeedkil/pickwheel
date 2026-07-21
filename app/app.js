@@ -1385,11 +1385,12 @@
     });
 
     segs.forEach(seg=>{
-      // label — always rotated 90° from the radial spoke (i.e. tangent to the
-      // circle, in the same clockwise sense the wheel spins) with no per-half
-      // correction. One consistent formula for every slice means there's no
-      // seam where the text direction flips depending which side of the wheel
-      // a slice happens to land on.
+      // label — always rotated to the slice's own radial mid-angle, with no
+      // extra offset and no per-half correction. At the wheel's 3 o'clock
+      // mark (mid = 0) this is plain horizontal text, legible left to right;
+      // the same single formula carries around the rest of the wheel with
+      // nothing conditional, so there's no seam where direction flips
+      // depending which side of the wheel a slice happens to land on.
       const mid = deg2rad((seg.start+seg.end)/2 - 90);
       ctx.save();
       if(!seg.skipClip){
@@ -1402,7 +1403,6 @@
 
       ctx.rotate(mid);
       ctx.translate(seg.labelRadius, 0);
-      ctx.rotate(Math.PI/2);
       ctx.fillStyle = readableTextColor(seg.color);
       ctx.font = `600 ${seg.fontSize}px Manrope`;
       ctx.textAlign = 'center';
