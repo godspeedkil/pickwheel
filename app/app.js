@@ -1061,6 +1061,21 @@
     });
   });
 
+  // Settings tab has its own sub-pages (Wheel / Winner banner / Colors) so no
+  // single page needs much scrolling — this also keeps the sidebar panel from
+  // growing tall enough to push the wheel out of view.
+  document.querySelectorAll('.subtab-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.subtab-btn').forEach(b=>b.classList.remove('active'));
+      document.querySelectorAll('.settings-page').forEach(p=>p.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelector(`.settings-page[data-page="${btn.dataset.page}"]`).classList.add('active');
+      // scroll this tab's content back to the top when switching sub-pages
+      const panels = document.querySelector('#tab-settings').closest('.tab-panels');
+      if(panels) panels.scrollTop = 0;
+    });
+  });
+
   /* ============================ WHEEL MATH ============================ */
   function totalWeight(){ return state.items.reduce((s,i)=> s + Math.max(0, Number(i.weight)||0), 0); }
 
