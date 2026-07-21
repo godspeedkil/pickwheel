@@ -1,0 +1,74 @@
+{
+  "name": "pickwheel",
+  "version": "1.0.0",
+  "description": "A customizable picker wheel with weighted odds, sound design, and per-item images — desktop app and standalone web app from one codebase.",
+  "main": "electron/main.js",
+  "author": "",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron .",
+    "icons": "node build/generate-icons.js",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --win --mac --linux"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "png2icons": "^2.0.1"
+  },
+  "build": {
+    "appId": "com.pickwheel.app",
+    "productName": "PickWheel",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "app/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "icon": "build/icons/icon.icns",
+      "target": [
+        {
+          "target": "dmg"
+        },
+        {
+          "target": "zip"
+        }
+      ]
+    },
+    "win": {
+      "icon": "build/icons/icon.ico",
+      "target": [
+        {
+          "target": "nsis"
+        },
+        {
+          "target": "portable"
+        }
+      ]
+    },
+    "linux": {
+      "icon": "build/icons/icon.png",
+      "category": "Utility",
+      "target": [
+        {
+          "target": "AppImage"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "portable": {
+      "artifactName": "PickWheel-Portable-${version}.${ext}"
+    }
+  }
+}

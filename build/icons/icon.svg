@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="35%" cy="28%" r="80%">
+      <stop offset="0%" stop-color="#241f3c"/>
+      <stop offset="100%" stop-color="#14121f"/>
+    </radialGradient>
+  </defs>
+
+  <!-- background squircle -->
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- pointer -->
+  <path d="M256 60 L292 118 L220 118 Z" fill="#e8b34c"/>
+
+  <!-- wheel -->
+  <g transform="translate(256,286)">
+    <circle r="164" fill="#1b1830" stroke="#e8b34c" stroke-width="10"/>
+    <path d="M0 0 L0 -164 A164 164 0 0 1 142 -82 Z" fill="#ff5d8f"/>
+    <path d="M0 0 L142 -82 A164 164 0 0 1 142 82 Z" fill="#4fd9c0"/>
+    <path d="M0 0 L142 82 A164 164 0 0 1 0 164 Z" fill="#e8b34c"/>
+    <path d="M0 0 L0 164 A164 164 0 0 1 -142 82 Z" fill="#7c83fd"/>
+    <path d="M0 0 L-142 82 A164 164 0 0 1 -142 -82 Z" fill="#ff8c42"/>
+    <path d="M0 0 L-142 -82 A164 164 0 0 1 0 -164 Z" fill="#59c9a5"/>
+    <circle r="30" fill="#e8b34c"/>
+    <circle r="30" fill="none" stroke="#1b1830" stroke-width="6"/>
+  </g>
+</svg>
