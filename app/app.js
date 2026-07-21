@@ -1385,13 +1385,11 @@
     });
 
     segs.forEach(seg=>{
-      // label — normally clipped to this slice's own wedge so text can
-      // never bleed radially past the rim or angularly into a neighboring
-      // slice. If "allow overflow" is on, that clip is skipped entirely so
-      // text can render at the user's chosen raw size regardless of how
-      // thin the slice actually is. Label text and font size were already
-      // computed (and cached) in getWheelLayout() — this just paints them
-      // at the current rotation, cheaply, every frame.
+      // label — always rotated 90° from the radial spoke (i.e. tangent to the
+      // circle, in the same clockwise sense the wheel spins) with no per-half
+      // correction. One consistent formula for every slice means there's no
+      // seam where the text direction flips depending which side of the wheel
+      // a slice happens to land on.
       const mid = deg2rad((seg.start+seg.end)/2 - 90);
       ctx.save();
       if(!seg.skipClip){
@@ -1404,8 +1402,7 @@
 
       ctx.rotate(mid);
       ctx.translate(seg.labelRadius, 0);
-      const flip = Math.cos(mid) < -0.02;
-      ctx.rotate(flip ? Math.PI : 0);
+      ctx.rotate(Math.PI/2);
       ctx.fillStyle = readableTextColor(seg.color);
       ctx.font = `600 ${seg.fontSize}px Manrope`;
       ctx.textAlign = 'center';
