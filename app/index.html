@@ -86,6 +86,7 @@ Burgers, 2"></textarea>
             <button class="subtab-btn active" data-page="wheel">Wheel</button>
             <button class="subtab-btn" data-page="banner">Winner banner</button>
             <button class="subtab-btn" data-page="colors">Colors</button>
+            <button class="subtab-btn" data-page="backup">Backup</button>
           </div>
 
           <div class="settings-page active" data-page="wheel">
@@ -197,6 +198,21 @@ Burgers, 2"></textarea>
             <div class="btn-row">
               <button class="btn small" id="addPaletteColorBtn">+ Add color</button>
               <button class="btn small primary" id="savePaletteBtn">Save palette</button>
+            </div>
+          </div>
+
+          <div class="settings-page" data-page="backup">
+            <h3 class="panel-title">Export settings</h3>
+            <p class="panel-sub">Downloads a JSON file with your wheel settings, items (including per-item images), saved wheels, custom palettes, and sound preferences (including uploaded custom sound clips) — everything except your spin history.</p>
+            <div class="btn-row">
+              <button class="btn small primary" id="exportSettingsBtn">⬇ Export as JSON</button>
+            </div>
+
+            <h3 class="panel-title" style="margin-top:22px;">Import settings</h3>
+            <p class="panel-sub">Loads a previously exported JSON file, replacing your current settings. Your spin history is left untouched.</p>
+            <div class="btn-row">
+              <button class="btn small" id="importSettingsBtn">⬆ Import from JSON</button>
+              <input type="file" id="importSettingsFile" accept="application/json" class="hidden">
             </div>
           </div>
         </div>

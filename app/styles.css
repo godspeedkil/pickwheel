@@ -442,6 +442,8 @@ select.field-select{
 }
 .hist-item .who{ font-weight:600; }
 .hist-item .meta{ color: var(--cream-dim); font-size: 12.5px; font-family:'IBM Plex Mono', monospace; text-align:right; }
+.hist-item .rm{ background:none; border:none; color: var(--cream-dim); font-size:13px; padding:0 4px; flex-shrink:0; align-self:center; }
+.hist-item .rm:hover{ color: var(--danger); }
 
 .tally{ display:flex; flex-wrap:wrap; gap:6px; margin: 10px 0 16px; }
 .tally-chip{

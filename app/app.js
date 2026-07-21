@@ -959,6 +959,7 @@
     try{
       const s = await window.storage.get('history');
       if(s && s.value){ history = JSON.parse(s.value); }
+      history.forEach(h=>{ if(!h.id) h.id = id(); });
     }catch(e){ history = []; }
     try{
       // Each clip lives in its own storage key (custom-clip:<id>) so a single large
@@ -1002,7 +1003,13 @@
       if(s && s.value){ customPalettes = JSON.parse(s.value); }
     }catch(e){ customPalettes = {}; }
     await preloadItemImages(state.items);
-    // backfill fields that might be missing from state saved by an older version
+    backfillState();
+  }
+
+  // Fills in fields that might be missing from state saved by an older version of the
+  // app (or from an imported backup that predates a newer setting). Shared by loadAll()
+  // on startup and by importSettings() so both paths land on a fully-valid state.
+  function backfillState(){
     if(!state.sound.source) state.sound.source = { music:'generated', tick:'generated', win:'generated', spinStart:'generated' };
     if(!state.sound.variant) state.sound.variant = { music:'classic', tick:'classic', win:'classicChime', spinStart:'quickWhoosh' };
     if(typeof state.sound.spinStart !== 'boolean') state.sound.spinStart = true;
@@ -1144,6 +1151,9 @@
     saveWheelBtn: document.getElementById('saveWheelBtn'),
     savedList: document.getElementById('savedList'),
     clearHistoryBtn: document.getElementById('clearHistoryBtn'),
+    exportSettingsBtn: document.getElementById('exportSettingsBtn'),
+    importSettingsBtn: document.getElementById('importSettingsBtn'),
+    importSettingsFile: document.getElementById('importSettingsFile'),
     historyList: document.getElementById('historyList'),
     tallyBox: document.getElementById('tallyBox'),
     canvas: document.getElementById('wheelCanvas'),
@@ -2666,6 +2676,7 @@
     el.winnerBanner.classList.add('show');
 
     history.unshift({
+      id: id(),
       time: Date.now(),
       wheelName: state.wheelName,
       result: winnerItem.label
@@ -2786,14 +2797,146 @@
       const row = document.createElement('div');
       row.className = 'hist-item';
       const d = new Date(h.time);
-      row.innerHTML = `<span class="who">${escapeHtml(h.result)}</span><span class="meta">${escapeHtml(h.wheelName)}<br>${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>`;
+      const info = document.createElement('div');
+      info.style.display = 'flex'; info.style.flex = '1'; info.style.justifyContent = 'space-between'; info.style.gap = '10px';
+      info.innerHTML = `<span class="who">${escapeHtml(h.result)}</span><span class="meta">${escapeHtml(h.wheelName)}<br>${d.toLocaleDateString()} ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</span>`;
+      const rm = document.createElement('button');
+      rm.className = 'rm'; rm.innerHTML = '✕'; rm.title = 'Remove this result';
+      rm.addEventListener('click', ()=> removeHistoryItem(h.id));
+      row.append(info, rm);
       el.historyList.appendChild(row);
     });
+  }
+  function removeHistoryItem(entryId){
+    history = history.filter(h=> h.id !== entryId);
+    persistHistory(); renderHistory();
   }
   el.clearHistoryBtn.addEventListener('click', confirmable(()=>{
     history = [];
     persistHistory(); renderHistory();
   }, 'Clear history', 'Really clear?'));
+
+  /* ============================ BACKUP (export/import settings) ============================ */
+  async function exportSettings(){
+    // gather every item image referenced by the active wheel or any saved wheel,
+    // pulling from storage anything not already cached in memory, so a restored
+    // backup doesn't leave saved wheels with missing pictures
+    const neededIds = new Set();
+    state.items.forEach(it=>{ if(it.image) neededIds.add(it.id); });
+    Object.values(savedWheels).forEach(w=>{
+      (w.items||[]).forEach(it=>{ if(it.image) neededIds.add(it.id); });
+    });
+    const images = {};
+    for(const itemId of neededIds){
+      let dataURL = itemImages[itemId];
+      if(dataURL === undefined){
+        try{
+          const res = await window.storage.get('item-image:'+itemId);
+          dataURL = (res && res.value) ? JSON.parse(res.value) : null;
+        }catch(e){ dataURL = null; }
+      }
+      if(dataURL) images[itemId] = dataURL;
+    }
+
+    const payload = {
+      type: 'pickwheel-settings-backup',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      state,
+      savedWheels,
+      customPalettes,
+      customSounds,
+      itemImages: images
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (state.wheelName || 'pickwheel').replace(/[^a-z0-9-_]+/gi, '-').toLowerCase();
+    a.href = url;
+    a.download = `${safeName}-settings-backup.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    flashMessage('Settings exported.', 'Exported');
+  }
+
+  async function importSettingsFromFile(file){
+    let payload;
+    try{
+      const text = await file.text();
+      payload = JSON.parse(text);
+    }catch(e){
+      flashMessage("That file isn't valid JSON.", 'Import failed');
+      return;
+    }
+    if(!payload || typeof payload !== 'object' || !payload.state){
+      flashMessage("That doesn't look like a PickWheel settings backup.", 'Import failed');
+      return;
+    }
+    if(!window.confirm('This replaces your current wheel, saved wheels, palettes, and sound settings with the ones in this file. Your spin history is kept either way. Continue?')){
+      return;
+    }
+
+    // stop anything currently playing/spinning before swapping everything out from under it
+    if(spinning) abortSpin();
+    stopWhir();
+    stopActivePreview();
+
+    Object.assign(state, payload.state);
+    savedWheels = (payload.savedWheels && typeof payload.savedWheels === 'object') ? payload.savedWheels : {};
+    customPalettes = (payload.customPalettes && typeof payload.customPalettes === 'object') ? payload.customPalettes : {};
+
+    customSounds = { music: [], tick: [], win: [], spinStart: [] };
+    customBuffers = { music: [], tick: [], win: [], spinStart: [] };
+    if(payload.customSounds){
+      SOUND_DEFS.forEach(d=>{
+        const clips = Array.isArray(payload.customSounds[d.key]) ? payload.customSounds[d.key] : [];
+        customSounds[d.key] = clips.map(c=> ({ id: c.id || id(), name: c.name, size: c.size, dataURL: c.dataURL }));
+      });
+    }
+
+    itemImages = {};
+    if(payload.itemImages && typeof payload.itemImages === 'object'){
+      Object.keys(payload.itemImages).forEach(k=>{ itemImages[k] = payload.itemImages[k]; });
+    }
+
+    backfillState();
+
+    // persist everything we just swapped in
+    persistState();
+    await persistSavedWheels();
+    await persistCustomPalettes();
+    await persistClipIndex();
+    for(const d of SOUND_DEFS){
+      for(const clip of customSounds[d.key]){ await persistClip(clip); }
+    }
+    for(const itemId of Object.keys(itemImages)){
+      if(itemImages[itemId]) await persistItemImage(itemId, itemImages[itemId]);
+    }
+    await decodeAllCustomSounds();
+
+    // refresh every part of the UI that reads from state/customSounds/etc.
+    el.wheelName.value = state.wheelName;
+    syncSettingsUI();
+    syncSoundUI();
+    renderPaletteGroupSelect();
+    renderPaletteGrid();
+    renderPaletteBuilder();
+    renderItems();
+    renderSaved();
+    fitCanvas();
+    drawWheel();
+    flashMessage('Settings imported.', 'Imported');
+  }
+
+  el.exportSettingsBtn.addEventListener('click', exportSettings);
+  el.importSettingsBtn.addEventListener('click', ()=> el.importSettingsFile.click());
+  el.importSettingsFile.addEventListener('change', ()=>{
+    const file = el.importSettingsFile.files && el.importSettingsFile.files[0];
+    el.importSettingsFile.value = '';
+    if(file) importSettingsFromFile(file);
+  });
 
   /* ============================ INIT ============================ */
   async function init(){
