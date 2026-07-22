@@ -193,6 +193,18 @@ Burgers, 2"></textarea>
               <label>Slot text size <span class="val" id="slotLabelSizeVal">26px</span></label>
               <input type="range" id="slotLabelSizeRange" min="12" max="42" step="1" value="26">
             </div>
+
+            <div id="gpuPrefSection" class="hidden">
+              <h3 class="panel-title">Performance</h3>
+              <div class="switch-row" style="border-bottom:none; padding-top:0; margin-bottom:8px;">
+                <div class="lbl">Hardware acceleration<small>Uses your graphics card to render the spin animations. Turn this off only if the app looks glitchy, flickers, or crashes — some graphics drivers don't handle it well. Takes effect after a restart.</small></div>
+                <label class="switch"><input type="checkbox" id="gpuAccelToggle"><span class="track"></span></label>
+              </div>
+              <p class="panel-sub hidden" id="gpuRestartNote" style="margin:0 0 8px;">Restart PickWheel to apply this change.</p>
+              <div class="btn-row hidden" id="gpuRestartRow">
+                <button class="btn small primary" id="gpuRestartBtn">Restart now</button>
+              </div>
+            </div>
           </div>
 
           <div class="settings-page" data-page="banner">

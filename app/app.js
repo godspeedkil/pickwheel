@@ -1224,6 +1224,11 @@
     customPaletteColors: document.getElementById('customPaletteColors'),
     addPaletteColorBtn: document.getElementById('addPaletteColorBtn'),
     savePaletteBtn: document.getElementById('savePaletteBtn'),
+    gpuPrefSection: document.getElementById('gpuPrefSection'),
+    gpuAccelToggle: document.getElementById('gpuAccelToggle'),
+    gpuRestartNote: document.getElementById('gpuRestartNote'),
+    gpuRestartRow: document.getElementById('gpuRestartRow'),
+    gpuRestartBtn: document.getElementById('gpuRestartBtn'),
     soundRows: document.getElementById('soundRows'),
     recencyWeightToggle: document.getElementById('recencyWeightToggle'),
     normalizeCustomToggle: document.getElementById('normalizeCustomToggle'),
@@ -1336,7 +1341,7 @@
     const dt = (now - idleLastTime) / 1000;
     idleLastTime = now;
     currentRotation += IDLE_SPIN_DEG_PER_SEC * dt;
-    drawWheel();
+    applyWheelRotation();
     idleRafId = requestAnimationFrame(idleSpinFrame);
   }
   function startIdleSpin(){
@@ -1453,13 +1458,28 @@
       if(!posterSpinning) renderPosterIdle();
       return;
     }
+    drawWheelArt();
+    applyWheelRotation();
+  }
+
+  // Repaints the wheel's static artwork — slice fills, labels, outer ring —
+  // onto the canvas bitmap. Deliberately rotation-INDEPENDENT: it always
+  // draws as if currentRotation + state.settings.angle were 0. The actual
+  // spin angle is applied afterward as a CSS transform on the canvas
+  // element instead (see applyWheelRotation) — a GPU-composited layer
+  // move, not a redraw. That split is what lets idle spin and real spins
+  // update 60x/sec by moving that layer instead of re-running the full
+  // slice/label draw (fills, strokes, and the measureText-based font-fit
+  // pass) every single frame. This function only needs to run when the
+  // wheel's actual CONTENT changes — items, weights, colors, labels, or a
+  // canvas resize — never for a rotation-only update.
+  function drawWheelArt(){
     const size = el.canvas.clientWidth;
     const cx = size/2, cy = size/2;
     ctx.clearRect(0,0,size,size);
 
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.rotate(deg2rad(currentRotation + state.settings.angle));
 
     const { r, segs } = getWheelLayout();
 
@@ -1530,6 +1550,14 @@
     ctx.stroke();
 
     ctx.restore();
+  }
+
+  // The cheap half of the split: just moves the already-painted canvas via
+  // CSS, letting the compositor handle it on the GPU. Safe and correct to
+  // call as often as needed (every animation frame) since it touches no
+  // pixels.
+  function applyWheelRotation(){
+    el.canvas.style.transform = `rotate(${currentRotation + state.settings.angle}deg)`;
   }
 
   function readableTextColor(hex){
@@ -2954,6 +2982,34 @@
     applyPalette(name, { force:true, message: 'Saved "'+name+'"' });
   });
 
+  // Desktop-only performance control. window.pickwheelGpu only exists in the
+  // Electron build (see preload.js) — the web build has no main process to
+  // configure, so this whole section stays hidden there. Electron only lets
+  // hardware acceleration be decided once, at startup, so flipping the
+  // toggle can't take effect live — it just saves the preference and offers
+  // a restart to apply it.
+  async function initGpuPrefUI(){
+    if(!window.pickwheelGpu || !el.gpuPrefSection) return;
+    el.gpuPrefSection.classList.remove('hidden');
+    let enabled = true;
+    try{ enabled = await window.pickwheelGpu.getPreference(); }catch(e){ /* default: on */ }
+    el.gpuAccelToggle.checked = enabled;
+    el.gpuAccelToggle.addEventListener('change', async ()=>{
+      const next = el.gpuAccelToggle.checked;
+      const ok = await window.pickwheelGpu.setPreference(next).catch(()=> false);
+      if(!ok){
+        flashMessage('Could not save that preference.', 'Notice');
+        el.gpuAccelToggle.checked = !next; // revert the visible toggle to match reality
+        return;
+      }
+      el.gpuRestartNote.classList.remove('hidden');
+      el.gpuRestartRow.classList.remove('hidden');
+    });
+    el.gpuRestartBtn.addEventListener('click', ()=>{
+      window.pickwheelGpu.relaunch();
+    });
+  }
+
   /* ============================ SOUNDS ============================ */
   el.recencyWeightToggle.addEventListener('change', ()=>{
     state.sound.recencyWeighted = el.recencyWeightToggle.checked;
@@ -3689,7 +3745,7 @@
       currentRotation = rotationTimeline
         ? rotationTimeline.valueAt(Math.min(elapsed, totalSpinDuration))
         : from + (to-from)*ease(Math.min(1, elapsed/duration));
-      drawWheel();
+      applyWheelRotation();
 
       // ticks
       while(scheduleIdx < schedule.length && schedule[scheduleIdx] <= currentRotation){
@@ -4176,6 +4232,7 @@
     fitConfetti();
     decodeAllCustomSounds();
     applyWheelStyle();
+    initGpuPrefUI();
   }
   init();
 

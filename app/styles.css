@@ -100,7 +100,7 @@ input, select, textarea{ font-family:inherit; }
   aspect-ratio: 1/1;
   margin-top: 6px;
 }
-#wheelCanvas{ width:100%; height:100%; display:block; filter: drop-shadow(0 12px 30px rgba(0,0,0,0.5)); }
+#wheelCanvas{ width:100%; height:100%; display:block; filter: drop-shadow(0 12px 30px rgba(0,0,0,0.5)); will-change: transform; }
 
 .pointer{
   position:absolute; top: -8px; left:50%; transform: translateX(-50%);

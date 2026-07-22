@@ -1,6 +1,48 @@
 const { app, BrowserWindow, ipcMain, Menu, shell } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const storage = require("./storage-main");
+
+// Whether to run with GPU-accelerated rendering. On by default — it's what
+// makes the wheel/slot/poster spin animations smooth — but a small minority
+// of machines (older or buggy GPU drivers, some Linux/VM setups) render
+// worse, flicker, or even crash with it on, so it's exposed as a Settings
+// toggle for anyone who hits that. Electron can only make this decision
+// once, before the app is ready, so it's read from its own tiny synchronous
+// preference file here rather than through the normal async window.storage
+// API the rest of the app uses — that API is IPC-based and needs a live
+// renderer on the other end, which doesn't exist yet this early.
+const GPU_PREFS_FILE = path.join(storage.getDataDir(), "gpu-prefs.json");
+function readGpuAccelerationPref() {
+  try {
+    const raw = fs.readFileSync(GPU_PREFS_FILE, "utf8");
+    return JSON.parse(raw).hardwareAcceleration !== false; // absent/corrupt -> default on
+  } catch (e) {
+    return true;
+  }
+}
+if (!readGpuAccelerationPref()) {
+  app.disableHardwareAcceleration();
+}
+
+ipcMain.handle("gpu:getPreference", () => readGpuAccelerationPref());
+ipcMain.handle("gpu:setPreference", (event, enabled) => {
+  try {
+    fs.mkdirSync(path.dirname(GPU_PREFS_FILE), { recursive: true });
+    fs.writeFileSync(GPU_PREFS_FILE, JSON.stringify({ hardwareAcceleration: !!enabled }), "utf8");
+    return true;
+  } catch (e) {
+    return false;
+  }
+});
+// The renderer calls this once the person confirms — the new preference
+// only takes effect on the next launch (see the disableHardwareAcceleration
+// call above, which only runs this early on startup), so relaunching is how
+// "apply now" actually works from the Settings toggle.
+ipcMain.handle("gpu:relaunch", () => {
+  app.relaunch();
+  app.exit(0);
+});
 
 // IPC handlers — the renderer never touches the filesystem directly. It
 // calls window.storage.get/set/delete (exposed by preload.js), which sends

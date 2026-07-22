@@ -20,3 +20,13 @@ contextBridge.exposeInMainWorld("storage", {
   set: (key, value) => ipcRenderer.invoke("storage:set", key, value),
   delete: (key) => ipcRenderer.invoke("storage:delete", key),
 });
+
+// Desktop-only: lets Settings show a "hardware acceleration" toggle and act
+// on it. Not present in the web build at all (there's no Electron main
+// process to configure — the browser owns that decision on its own), which
+// is also how app.js knows whether to show the control in the first place.
+contextBridge.exposeInMainWorld("pickwheelGpu", {
+  getPreference: () => ipcRenderer.invoke("gpu:getPreference"),
+  setPreference: (enabled) => ipcRenderer.invoke("gpu:setPreference", enabled),
+  relaunch: () => ipcRenderer.invoke("gpu:relaunch"),
+});
