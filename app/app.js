@@ -86,10 +86,10 @@
   let state = {
     wheelName: 'Untitled Wheel',
     items: [
-      { id: id(), label: 'Pizza',   weight: 3, color: null, image: null },
-      { id: id(), label: 'Sushi',   weight: 1, color: null, image: null },
-      { id: id(), label: 'Tacos',   weight: 2, color: null, image: null },
-      { id: id(), label: 'Burgers', weight: 2, color: null, image: null }
+      { id: id(), label: 'Pizza',   weight: 3, color: null, image: null, winSound: null },
+      { id: id(), label: 'Sushi',   weight: 1, color: null, image: null, winSound: null },
+      { id: id(), label: 'Tacos',   weight: 2, color: null, image: null, winSound: null },
+      { id: id(), label: 'Burgers', weight: 2, color: null, image: null, winSound: null }
     ],
     paletteName: 'Carnival',
     settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, labelOverflow: false, labelRawSize: 17, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
@@ -117,6 +117,11 @@
   // storage key (item-image:<id>) so one huge item image can't crowd out others.
   let itemImages = {};
   const MAX_ITEM_IMAGE_BYTES = 3.5 * 1000 * 1000; // same reasoning as MAX_SOUND_BYTES below
+  // per-item winner-sound overrides: itemId -> dataURL, mirrors itemImages exactly.
+  // A decoded-buffer cache lives alongside it so playback at the winner moment is
+  // synchronous, same as every other sound in the app.
+  let itemWinSounds = {};
+  let itemWinSoundBuffers = {};
 
   const SOUND_DEFS = [
     { key: 'music',     title: 'Spin whir',   desc: 'Ambient sound while the wheel spins' },
@@ -1003,6 +1008,7 @@
       if(s && s.value){ customPalettes = JSON.parse(s.value); }
     }catch(e){ customPalettes = {}; }
     await preloadItemImages(state.items);
+    await preloadItemWinSounds(state.items);
     backfillState();
   }
 
@@ -1109,6 +1115,24 @@
           const res = await window.storage.get('item-image:'+item.id);
           itemImages[item.id] = (res && res.value) ? JSON.parse(res.value) : null;
         }catch(e){ itemImages[item.id] = null; }
+      }
+    }
+  }
+  async function persistItemWinSound(itemId, dataURL){
+    try{ await window.storage.set('item-win-sound:'+itemId, JSON.stringify(dataURL)); return true; }
+    catch(e){ console.error('save failed', e); flashMessage('Could not save that sound — try a smaller file.', 'Notice'); return false; }
+  }
+  async function deleteItemWinSoundStorage(itemId){
+    try{ await window.storage.delete('item-win-sound:'+itemId); }catch(e){ /* not critical */ }
+  }
+  async function preloadItemWinSounds(items){
+    for(const item of items){
+      if(item.winSound && !(item.id in itemWinSounds)){
+        try{
+          const res = await window.storage.get('item-win-sound:'+item.id);
+          itemWinSounds[item.id] = (res && res.value) ? JSON.parse(res.value) : null;
+        }catch(e){ itemWinSounds[item.id] = null; }
+        if(itemWinSounds[item.id]) await decodeItemWinSoundBuffer(item.id);
       }
     }
   }
@@ -1472,6 +1496,7 @@
   window.addEventListener('resize', fitCanvas);
 
   /* ============================ ITEMS UI ============================ */
+  let expandedSoundPanels = new Set(); // item ids whose winner-sound panel is currently open
   function renderItems(){
     el.itemsList.innerHTML = '';
     if(state.items.length === 0){
@@ -1481,6 +1506,9 @@
       el.itemsList.appendChild(empty);
     }
     state.items.forEach((item, idx)=>{
+      const block = document.createElement('div');
+      block.className = 'item-block';
+
       const row = document.createElement('div');
       row.className = 'item-row';
 
@@ -1527,6 +1555,23 @@
         imgWrap.appendChild(imgRm);
       }
 
+      // winner-sound override — a single small toggle button, same footprint as the
+      // image button. It only shows a tint when a sound is actually set; the actual
+      // upload/preview/remove controls live in a collapsible panel below the row
+      // rather than as more row-level icons, to keep the list itself uncluttered.
+      const soundBtn = document.createElement('button');
+      soundBtn.type = 'button';
+      soundBtn.className = 'item-sound-btn';
+      const hasWinSound = !!(item.winSound && itemWinSoundBuffers[item.id]);
+      if(hasWinSound) soundBtn.classList.add('active');
+      soundBtn.textContent = '🔔';
+      soundBtn.title = hasWinSound ? 'Winner sound set — click to edit' : 'Set a custom winner sound for this item';
+      soundBtn.addEventListener('click', ()=>{
+        if(expandedSoundPanels.has(item.id)) expandedSoundPanels.delete(item.id);
+        else expandedSoundPanels.add(item.id);
+        renderItems();
+      });
+
       const label = document.createElement('input');
       label.type = 'text';
       label.className = 'item-label';
@@ -1550,12 +1595,73 @@
       del.title = 'Remove item';
       del.addEventListener('click', ()=>{
         state.items = state.items.filter(i=>i.id !== item.id);
+        expandedSoundPanels.delete(item.id);
         renderItems(); drawWheel(); persistState();
       });
 
-      row.append(swatch, imgWrap, label, weight, del);
-      el.itemsList.appendChild(row);
+      row.append(swatch, imgWrap, soundBtn, label, weight, del);
+      block.appendChild(row);
+
+      if(expandedSoundPanels.has(item.id)){
+        block.appendChild(buildItemSoundPanel(item));
+      }
+
+      el.itemsList.appendChild(block);
     });
+  }
+
+  function buildItemSoundPanel(item){
+    const panel = document.createElement('div');
+    panel.className = 'item-sound-panel';
+    const hasWinSound = !!(item.winSound && itemWinSoundBuffers[item.id]);
+
+    const label = document.createElement('div');
+    label.className = 'item-sound-panel-label';
+    label.textContent = hasWinSound
+      ? `Plays instead of the normal win sound when "${item.label || 'this item'}" wins`
+      : `Optional — overrides the normal win sound only when "${item.label || 'this item'}" wins`;
+    panel.appendChild(label);
+
+    const row = document.createElement('div');
+    row.className = 'item-sound-panel-row';
+
+    if(hasWinSound){
+      const name = document.createElement('span');
+      name.className = 'item-sound-panel-name';
+      name.textContent = `${item.winSound.name} · ${formatBytes(item.winSound.size)}`;
+      row.appendChild(name);
+
+      const previewBtn = document.createElement('button');
+      previewBtn.className = 'btn small ghost'; previewBtn.textContent = '▶ Preview';
+      previewBtn.addEventListener('click', ()=>{
+        stopActivePreview();
+        const buf = itemWinSoundBuffers[item.id];
+        const src = playBufferOneShot(buf, state.sound.volumes.win);
+        const capMs = Math.min(PREVIEW_MAX_MS, buf.duration*1000);
+        previewStop = ()=> src.stop();
+        previewTimer = setTimeout(()=>{ try{ src.stop(); }catch(e){} previewStop = null; }, capMs);
+      });
+      row.appendChild(previewBtn);
+
+      const rmBtn = document.createElement('button');
+      rmBtn.className = 'btn small ghost'; rmBtn.textContent = 'Remove';
+      rmBtn.addEventListener('click', ()=> removeItemWinSound(item));
+      row.appendChild(rmBtn);
+    } else {
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file'; fileInput.accept = 'audio/*'; fileInput.className = 'hidden';
+      fileInput.addEventListener('change', ()=>{
+        const file = fileInput.files && fileInput.files[0];
+        fileInput.value = '';
+        if(file) handleItemWinSoundUpload(item, file);
+      });
+      const addBtn = document.createElement('button');
+      addBtn.className = 'btn small'; addBtn.textContent = 'Upload sound';
+      addBtn.addEventListener('click', ()=> fileInput.click());
+      row.append(addBtn, fileInput);
+    }
+    panel.appendChild(row);
+    return panel;
   }
 
   function handleItemImageUpload(item, file){
@@ -1583,8 +1689,35 @@
     renderItems();
   }
 
+  function handleItemWinSoundUpload(item, file){
+    if(!file.type.startsWith('audio/')){ flashMessage("That file doesn't look like audio.", 'Notice'); return; }
+    if(file.size > MAX_SOUND_BYTES){ flashMessage(`Keep sounds under ${formatBytes(MAX_SOUND_BYTES)}.`, 'Notice'); return; }
+    const reader = new FileReader();
+    reader.onload = async ()=>{
+      const dataURL = reader.result;
+      const saved = await persistItemWinSound(item.id, dataURL);
+      if(saved){
+        itemWinSounds[item.id] = dataURL;
+        item.winSound = { name: file.name, size: file.size };
+        await decodeItemWinSoundBuffer(item.id);
+        persistState();
+        renderItems();
+      }
+    };
+    reader.onerror = ()=> flashMessage('Could not read that file.', 'Notice');
+    reader.readAsDataURL(file);
+  }
+  function removeItemWinSound(item){
+    delete itemWinSounds[item.id];
+    delete itemWinSoundBuffers[item.id];
+    item.winSound = null;
+    deleteItemWinSoundStorage(item.id);
+    persistState();
+    renderItems();
+  }
+
   el.addItemBtn.addEventListener('click', ()=>{
-    state.items.push({ id: id(), label: 'New item', weight: 1, color: null, image: null });
+    state.items.push({ id: id(), label: 'New item', weight: 1, color: null, image: null, winSound: null });
     renderItems(); drawWheel(); persistState();
   });
   el.shuffleBtn.addEventListener('click', ()=>{
@@ -1654,7 +1787,7 @@
         const w = parseFloat(parts[1]);
         if(!isNaN(w) && w >= 0) weight = w;
       }
-      return { id: id(), label: label || 'Item', weight, color: null, image: null };
+      return { id: id(), label: label || 'Item', weight, color: null, image: null, winSound: null };
     }).filter(i=>i.label);
   }
   el.batchAppendBtn.addEventListener('click', ()=>{
@@ -2283,16 +2416,29 @@
     if(peak === undefined || peak < 0.001) return 1; // unmeasured, or near-silent/empty — don't blow up noise
     return Math.min(3, Math.max(0.2, state.sound.normalizeTargetPeak / peak));
   }
+  async function decodeDataURLToBuffer(dataURL){
+    const ac = getCtx();
+    const arr = dataURLToArrayBuffer(dataURL);
+    const buf = await ac.decodeAudioData(arr);
+    clipPeakLevel.set(buf, measurePeak(buf));
+    return buf;
+  }
   async function decodeClipBuffer(clip){
     try{
-      const ac = getCtx();
-      const arr = dataURLToArrayBuffer(clip.dataURL);
-      const buf = await ac.decodeAudioData(arr);
-      clipPeakLevel.set(buf, measurePeak(buf));
-      return buf;
+      return await decodeDataURLToBuffer(clip.dataURL);
     }catch(e){
       console.error('could not decode clip', e);
       return null;
+    }
+  }
+  async function decodeItemWinSoundBuffer(itemId){
+    const dataURL = itemWinSounds[itemId];
+    if(!dataURL){ delete itemWinSoundBuffers[itemId]; return; }
+    try{
+      itemWinSoundBuffers[itemId] = await decodeDataURLToBuffer(dataURL);
+    }catch(e){
+      console.error('could not decode item win sound', e);
+      itemWinSoundBuffers[itemId] = null;
     }
   }
   async function decodeAllCustomSounds(){
@@ -2302,6 +2448,11 @@
       for(const clip of clips){
         customBuffers[def.key].push(await decodeClipBuffer(clip));
       }
+    }
+  }
+  async function decodeAllItemWinSounds(){
+    for(const itemId of Object.keys(itemWinSounds)){
+      await decodeItemWinSoundBuffer(itemId);
     }
   }
   // Per-key logical clock + last-picked tick per clip id, used to softly penalize
@@ -2479,23 +2630,37 @@
     getVariant('tick').play(ac, tickVol);
     return null;
   }
+  // Plays a decoded AudioBuffer once through a fresh gain node (peak-normalized same
+  // as any other custom clip) and tracks it as the current win sound so it can be
+  // stopped early if the winner banner closes before the clip finishes.
+  function playBufferOneShot(buf, vol){
+    const ac = audioCtx();
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const gain = ac.createGain();
+    gain.gain.value = vol * normGainFor(buf);
+    src.connect(gain); gain.connect(ac.destination);
+    src.onended = ()=>{ if(winSoundNode === src) winSoundNode = null; };
+    src.start();
+    return src;
+  }
   function playWin(force){
     if(!force && !state.sound.win) return null;
     const ac = audioCtx();
     const customBuf = state.sound.source.win === 'custom' ? pickRandomBuffer('win') : null;
     const winVol = state.sound.volumes.win;
-    if(customBuf){
-      const src = ac.createBufferSource();
-      src.buffer = customBuf;
-      const gain = ac.createGain();
-      gain.gain.value = winVol * normGainFor(customBuf);
-      src.connect(gain); gain.connect(ac.destination);
-      src.onended = ()=>{ if(winSoundNode === src) winSoundNode = null; };
-      src.start();
-      return src;
-    }
+    if(customBuf) return playBufferOneShot(customBuf, winVol);
     getVariant('win').play(ac, winVol);
     return null;
+  }
+  // A specific item can override what plays when it wins (set from the Items list).
+  // Falls back to the normal win sound (generated or category-custom) otherwise, and
+  // is still gated by the master win-sound toggle either way.
+  function playWinForItem(winnerItem, force){
+    if(!force && !state.sound.win) return null;
+    const overrideBuf = winnerItem && winnerItem.winSound ? itemWinSoundBuffers[winnerItem.id] : null;
+    if(overrideBuf) return playBufferOneShot(overrideBuf, state.sound.volumes.win);
+    return playWin(force);
   }
   function playSpinStart(force){
     if(!force && !state.sound.spinStart) return null;
@@ -2699,7 +2864,7 @@
     } else {
       stopWhir();
     }
-    winSoundNode = playWin();
+    winSoundNode = playWinForItem(winnerItem);
     burstConfetti();
     clearTimeout(flashTimer); // don't let a leftover notice-timer hide this banner early
     el.bannerLabel.textContent = 'Winner';
@@ -2785,6 +2950,7 @@
         backfillState(); // a wheel saved with an older app version may be missing newer sound/settings fields — also sets uiPaletteGroup
         el.wheelName.value = state.wheelName;
         await preloadItemImages(state.items);
+        await preloadItemWinSounds(state.items);
         syncSettingsUI(); syncSoundUI(); renderPaletteGroupSelect(); renderPaletteGrid();
         renderItems(); drawWheel(); persistState();
         await persistClipIndex(); // so this wheel's clips are what a page reload picks back up
@@ -2902,6 +3068,25 @@
       if(dataURL) images[itemId] = dataURL;
     }
 
+    // per-item winner-sound overrides — same approach as item images: gather every
+    // one referenced by the active wheel or any saved wheel, from memory or storage
+    const neededWinSoundIds = new Set();
+    state.items.forEach(it=>{ if(it.winSound) neededWinSoundIds.add(it.id); });
+    Object.values(savedWheels).forEach(w=>{
+      (w.items||[]).forEach(it=>{ if(it.winSound) neededWinSoundIds.add(it.id); });
+    });
+    const winSounds = {};
+    for(const itemId of neededWinSoundIds){
+      let dataURL = itemWinSounds[itemId];
+      if(dataURL === undefined){
+        try{
+          const res = await window.storage.get('item-win-sound:'+itemId);
+          dataURL = (res && res.value) ? JSON.parse(res.value) : null;
+        }catch(e){ dataURL = null; }
+      }
+      if(dataURL) winSounds[itemId] = dataURL;
+    }
+
     // Custom sound clips live in their own storage key per clip, referenced by id from
     // both the active session (customSounds) and each saved wheel's own clip list — not
     // duplicated inline. For a full backup, resolve every id referenced anywhere into one
@@ -2932,7 +3117,8 @@
       customPalettes,
       currentCustomSoundRefs,
       clipLibrary,
-      itemImages: images
+      itemImages: images,
+      itemWinSounds: winSounds
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -2978,6 +3164,12 @@
       Object.keys(payload.itemImages).forEach(k=>{ itemImages[k] = payload.itemImages[k]; });
     }
 
+    itemWinSounds = {};
+    itemWinSoundBuffers = {};
+    if(payload.itemWinSounds && typeof payload.itemWinSounds === 'object'){
+      Object.keys(payload.itemWinSounds).forEach(k=>{ itemWinSounds[k] = payload.itemWinSounds[k]; });
+    }
+
     // v2 backups carry a flat clip library (one entry per unique clip, full audio data)
     // plus lightweight id references from the current session and each saved wheel.
     // v1 backups (from before per-wheel clip support) only had one flat customSounds
@@ -3020,7 +3212,11 @@
     for(const itemId of Object.keys(itemImages)){
       if(itemImages[itemId]) await persistItemImage(itemId, itemImages[itemId]);
     }
+    for(const itemId of Object.keys(itemWinSounds)){
+      if(itemWinSounds[itemId]) await persistItemWinSound(itemId, itemWinSounds[itemId]);
+    }
     await decodeAllCustomSounds();
+    await decodeAllItemWinSounds();
 
     // refresh every part of the UI that reads from state/customSounds/etc.
     el.wheelName.value = state.wheelName;
