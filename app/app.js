@@ -1150,7 +1150,9 @@
     clearItemsBtn: document.getElementById('clearItemsBtn'),
     batchInput: document.getElementById('batchInput'),
     batchAppendBtn: document.getElementById('batchAppendBtn'),
+    batchUpdateBtn: document.getElementById('batchUpdateBtn'),
     batchReplaceBtn: document.getElementById('batchReplaceBtn'),
+    batchSummary: document.getElementById('batchSummary'),
     durationRange: document.getElementById('durationRange'),
     durationVal: document.getElementById('durationVal'),
     spinsRange: document.getElementById('spinsRange'),
@@ -1790,17 +1792,83 @@
       return { id: id(), label: label || 'Item', weight, color: null, image: null, winSound: null };
     }).filter(i=>i.label);
   }
+  // Like parseBatch, but keeps weight as null when it's missing/unparseable instead of
+  // silently defaulting to 1 — for updating existing items we'd rather skip a line than
+  // guess and clobber someone's actual weight.
+  function parseBatchForUpdate(text){
+    return text.split('\n').map(l=>l.trim()).filter(Boolean).map(line=>{
+      const parts = line.split(',');
+      const label = parts[0].trim();
+      let weight = null;
+      if(parts.length > 1){
+        const w = parseFloat(parts[1]);
+        if(!isNaN(w) && w >= 0) weight = w;
+      }
+      return { label, weight };
+    }).filter(l=>l.label);
+  }
+  function condenseNameList(arr, cap=12){
+    const shown = arr.slice(0,cap).map(escapeHtml).join(', ');
+    return arr.length > cap ? `${shown}, +${arr.length-cap} more` : shown;
+  }
+  function clearBatchSummary(){
+    el.batchSummary.style.display = 'none';
+    el.batchSummary.innerHTML = '';
+  }
+  function renderBatchSummary({updatedCount, notFound, noWeight}){
+    if(updatedCount === 0 && notFound.length === 0 && noWeight.length === 0){
+      clearBatchSummary();
+      return;
+    }
+    const lines = [];
+    lines.push(`<div class="batch-summary-line"><strong>${updatedCount}</strong> item${updatedCount===1?'':'s'} updated</div>`);
+    if(notFound.length){
+      lines.push(`<div class="batch-summary-line warn"><strong>${notFound.length}</strong> not found on the wheel: ${condenseNameList(notFound)}</div>`);
+    }
+    if(noWeight.length){
+      lines.push(`<div class="batch-summary-line warn"><strong>${noWeight.length}</strong> skipped — no valid weight given: ${condenseNameList(noWeight)}</div>`);
+    }
+    el.batchSummary.innerHTML = lines.join('');
+    el.batchSummary.style.display = 'block';
+  }
   el.batchAppendBtn.addEventListener('click', ()=>{
     const parsed = parseBatch(el.batchInput.value);
     state.items = state.items.concat(parsed);
     el.batchInput.value = '';
+    clearBatchSummary();
     renderItems(); drawWheel(); persistState();
     switchTab('items');
+  });
+  el.batchUpdateBtn.addEventListener('click', ()=>{
+    const lines = parseBatchForUpdate(el.batchInput.value);
+    if(lines.length === 0){
+      flashMessage('Paste some items first.', 'Notice');
+      return;
+    }
+    let updatedCount = 0;
+    const notFound = [];
+    const noWeight = [];
+    lines.forEach(line=>{
+      if(line.weight === null){
+        noWeight.push(line.label);
+        return;
+      }
+      const matches = state.items.filter(it=> it.label.trim().toLowerCase() === line.label.toLowerCase());
+      if(matches.length === 0){
+        notFound.push(line.label);
+        return;
+      }
+      matches.forEach(it=>{ it.weight = line.weight; });
+      updatedCount += matches.length;
+    });
+    renderBatchSummary({ updatedCount, notFound, noWeight });
+    renderItems(); drawWheel(); persistState();
   });
   el.batchReplaceBtn.addEventListener('click', ()=>{
     const parsed = parseBatch(el.batchInput.value);
     state.items = parsed;
     el.batchInput.value = '';
+    clearBatchSummary();
     renderItems(); drawWheel(); persistState();
     switchTab('items');
   });

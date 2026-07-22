@@ -341,6 +341,14 @@ textarea#batchInput{
   color: var(--cream); font-family:'IBM Plex Mono', monospace; font-size: 14px;
   padding: 10px; line-height:1.6;
 }
+.batch-summary{
+  margin-top: 12px; padding: 10px 12px; background: rgba(0,0,0,0.16);
+  border: 1px solid var(--line); border-radius: 10px; font-size: 13px; line-height:1.6;
+}
+.batch-summary-line{ color: var(--cream); }
+.batch-summary-line.warn{ color: var(--cream-dim); margin-top: 4px; }
+.batch-summary-line.warn strong{ color: var(--gold-soft); }
+.batch-summary-line strong{ color: var(--gold-soft); }
 
 /* ---------- Settings / Sounds ---------- */
 .field{ margin-bottom: 16px; }

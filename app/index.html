@@ -69,15 +69,17 @@
         <!-- BATCH -->
         <div class="tab-panel" id="tab-batch">
           <h3 class="panel-title">Batch add</h3>
-          <p class="panel-sub">One item per line: <code>Name, weight</code>. Weight is optional and defaults to 1.</p>
+          <p class="panel-sub">One item per line: <code>Name, weight</code>. Weight is optional and defaults to 1. "Update weights" instead matches each line to an existing item by name (case-insensitive) and only changes its weight — everything else about that item, including its image and winner sound, is left alone.</p>
           <textarea id="batchInput" placeholder="Pizza, 3
 Sushi, 1
 Tacos
 Burgers, 2"></textarea>
           <div class="btn-row">
             <button class="btn primary" id="batchAppendBtn">Add to wheel</button>
+            <button class="btn" id="batchUpdateBtn">Update weights</button>
             <button class="btn danger" id="batchReplaceBtn">Replace wheel</button>
           </div>
+          <div class="batch-summary" id="batchSummary" style="display:none;"></div>
         </div>
 
         <!-- SETTINGS -->
