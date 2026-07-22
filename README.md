@@ -1,8 +1,8 @@
 # ✦ PickWheel
 
-**A beautiful, endlessly customizable picker wheel — for desktop or your browser.**
+**A beautiful, endlessly customizable picker — for desktop or your browser.**
 
-Weighted odds, real sound design, per-item images, dozens of color palettes, and a proper offline desktop app. No account, no server, no ads — everything lives on your own machine.
+Three picker styles (spinning wheel, slot machine, movie-poster marquee), weighted odds, real sound design, per-item images and winner sounds, dozens of color palettes, and a proper offline desktop app. No account, no server, no ads — everything lives on your own machine.
 
 <img width="1238" height="766" alt="pickwheel_1" src="https://github.com/user-attachments/assets/a04b316a-13bf-4903-a44d-43d97999a684" />
 
@@ -38,38 +38,52 @@ All builds are produced automatically from this repo — see [Building from sour
 
 ## Features
 
-**The wheel**
-- Weighted items — bigger weight, bigger slice, exact odds every time
+**Three picker styles, one shared engine**
+- 🎡 **Wheel** — the classic spinning wheel, weighted slices sized to match each item's odds
+- 🎰 **Slot machine** — a vertical reel with a payline, lever-style Spin button
+- 🎬 **Movie posters** — a horizontal marquee reel that lands on a spotlighted "poster" card (falls back to a generated gradient card with the item's name if it has no image)
+- Switch between them any time from the tabs above the stage — odds, sounds, history, and the shared winner banner all stay exactly the same; only the reveal animation changes
+- Every reel is shuffled so the same item won't turn up again until the rest of the pool has had a turn, so nothing feels like it's repeating right after itself
+- Optional "near miss" on the wheel and slot machine — it slows down and hovers between two items, wobbling for a beat, before snapping to the real result
+
+**Weighted odds**
+- Every item gets a weight; the actual winner is always chosen by that exact weighted-random odds, identical across all three picker styles
+- Bigger weight, bigger wheel slice / more frequent slot-and-poster reel appearances — the visuals track the real probability
 - Cancel a spin mid-animation by clicking Spin again
-- Adjustable spin duration (2–30s), speed, easing style, resting angle (with an option to randomize it every spin)
+
+**Spin behavior**
+- Adjustable spin duration (2–30s), extra rotations/speed, easing style (smooth, dramatic, or mechanical), and resting angle (with an option to randomize it every spin)
 - Optional idle spin — the wheel drifts slowly when it's just sitting there, purely for looks, never produces a result
-- Configurable label length and auto-scaling text so more of your item names actually show on the wheel
+- Configurable label length and auto-scaling text (with an overflow option) so more of your item names actually show, independently tunable for the wheel and the slot machine
 
 **Items**
-- Add items one at a time, or paste a batch list (`Name, weight` per line)
-- Shuffle order, per-item custom colors, and an optional image per item
+- Add items one at a time, or paste a batch list (`Name, weight` per line, weight optional)
+- Batch tab can also append, replace the whole wheel, or match existing items by name to update just their weights — without touching their image or winner sound
+- Shuffle order, per-item custom colors, an optional image per item, and an optional custom winner sound per item
 - No hard limits on item count or name length
 
 **Colors**
 - 24 built-in palettes across six themes: Vibrant, Pastel, Seasonal, Holiday, Elegant, and Nature
-- A "Trending" theme and a "Timeless" theme (Flat UI Colors, Material Design, Solarized, Monokai, Crayola's original 1903 box, Bauhaus, Memphis Milano, iOS system colors, and 25 years of Pantone Colors of the Year)
+- A "Trending 2026" theme and a "Timeless" theme (Flat UI Colors, Material Design, Solarized, Monokai, Crayola's original 1903 box, Bauhaus, Memphis Milano, iOS system colors, and 25 years of Pantone Colors of the Year)
 - Build and save your own palettes
 
 **Sound**
 - 60+ generated sound effects across four categories (spin whir, tick, win fanfare, spin start) — fully synthesized, no audio files required
 - Independent volume control for each sound category, so you can balance the mix yourself
 - The spin-start sound plays once when you press Spin — not when you stop a spin early
-- Or upload your own clips (multiple per category — one is picked at random each spin), MP3/WAV/OGG and more
+- Or upload your own clips (up to 25 per category, ~3.5MB each) — one plays at random each spin, MP3/WAV/OGG and more
+- Custom clips favor whichever hasn't played recently, so a category with several clips doesn't repeat the same one back-to-back
+- Optional ducking on win (lowers other sounds when the win fanfare plays) and automatic loudness normalization for uploaded clips, with an adjustable target level
 
 **The winner popup**
 - Optional image per item, shown when it wins — five layout options (left/right/top/bottom/background), adjustable size and opacity, crop/fit/stretch modes
 - Stays open until you dismiss it — never disappears on its own mid-glance
 
 **Everything else**
-- Save named wheel configurations and reload them instantly
+- Save named wheel configurations and reload them instantly — each saved wheel keeps its own items, settings, and sound setup fully isolated from the others
 - Full spin history with a frequency tally
 - Six title fonts and an adjustable size for the wheel name
-- Export/import your entire setup as a single backup file
+- Export/import your entire setup as a single backup file — settings, items (including per-item images and winner sounds), saved wheels, custom palettes, and sound preferences (spin history isn't included)
 
 ---
 

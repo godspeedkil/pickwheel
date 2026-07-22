@@ -1547,6 +1547,30 @@
     return a;
   }
 
+  // Builds `loops` passes through `pool`, concatenated. Each pass gets its
+  // own independent shuffle rather than lumping every copy of the pool
+  // into one array and shuffling the whole multiset together — the latter
+  // is what the reel used to do, and a plain Fisher-Yates over a multiset
+  // doesn't preserve spacing between duplicates. Two or three copies of the
+  // same item landing within a handful of slots of each other is a normal,
+  // even likely, outcome of that approach, and it only got worse as loop
+  // count went up (small pools need more loops to hit the target travel
+  // distance, so they were the most prone to visibly repeating).
+  // Shuffling each pass on its own guarantees an item can't recur until
+  // every other item in the pool has had a turn, except possibly right at
+  // the seam between two passes — which the boundary swap below patches.
+  function buildLoopedSequence(pool, loops){
+    const passes = [];
+    for(let i=0;i<loops;i++) passes.push(shuffledCopy(pool));
+    for(let i=1;i<passes.length;i++){
+      if(pool.length > 1 && passes[i][0] === passes[i-1][passes[i-1].length-1]){
+        const swapWith = 1 + Math.floor(Math.random()*(passes[i].length-1));
+        [passes[i][0], passes[i][swapWith]] = [passes[i][swapWith], passes[i][0]];
+      }
+    }
+    return passes.flat();
+  }
+
   function slotWeightedPool(){
     return state.items.filter(it=> (Math.max(0, Number(it.weight)||0)) > 0);
   }
@@ -1684,7 +1708,7 @@
         return;
       }
       const loops = Math.max(1, Math.ceil(SLOT_VISIBLE_ROWS/pool.length));
-      const seq = shuffledCopy(Array.from({length: loops}).flatMap(()=> pool));
+      const seq = buildLoopedSequence(pool, loops);
       removeWindowRepeats(seq, colorMap);
       renderReelStrip(stripEl, seq.slice(0, SLOT_VISIBLE_ROWS), heightPx);
     });
@@ -1692,7 +1716,7 @@
 
   function buildReelStrip(pool, winnerItem, colorMap){
     const winnerColor = colorMap.get(winnerItem);
-    const mainSeq = shuffledCopy(Array.from({length: SLOT_LOOPS}).flatMap(()=> pool));
+    const mainSeq = buildLoopedSequence(pool, SLOT_LOOPS);
     // the filler is the row that ends up right below the winner at rest —
     // it needs to differ from the winner AND from whatever row lands above
     // the winner, or a 3-row-window repeat (top === bottom, straddling the
@@ -1993,7 +2017,7 @@
         return;
       }
       const loops = Math.max(1, Math.ceil(POSTER_VISIBLE_COLS/pool.length));
-      const seq = shuffledCopy(Array.from({length: loops}).flatMap(()=> pool));
+      const seq = buildLoopedSequence(pool, loops);
       removeWindowRepeats(seq, colorMap);
       renderPosterStrip(stripEl, seq.slice(0, POSTER_VISIBLE_COLS), widthPx);
     });
@@ -2005,7 +2029,7 @@
     // tiny pool, but never so many passes that a large pool blows way past
     // the target travel distance
     const loops = Math.max(2, Math.ceil(POSTER_TARGET_TRAVEL / pool.length));
-    const mainSeq = shuffledCopy(Array.from({length: loops}).flatMap(()=> pool));
+    const mainSeq = buildLoopedSequence(pool, loops);
     // same reasoning as the slot reel's filler: this needs to differ from
     // both the winner AND whatever card lands just before it, or a
     // straddling repeat (before === after, with the winner sandwiched
