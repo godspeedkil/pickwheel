@@ -5,6 +5,9 @@
 Three picker styles (spinning wheel, slot machine, movie-poster marquee), weighted odds, real sound design, per-item images and winner sounds, dozens of color palettes, and a proper offline desktop app. No account, no server, no ads — everything lives on your own machine.
 
 <img width="1238" height="766" alt="pickwheel_1" src="https://github.com/user-attachments/assets/a04b316a-13bf-4903-a44d-43d97999a684" />
+<img width="1466" height="964" alt="pickwheel_2" src="https://github.com/user-attachments/assets/fa865c0d-1ff1-4ecc-b5b1-4d2604aec06e" />
+<img width="1466" height="964" alt="pickwheel_3" src="https://github.com/user-attachments/assets/17450563-c330-4325-8133-49d253d3b14a" />
+
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Web-informational)
