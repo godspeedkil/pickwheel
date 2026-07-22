@@ -952,6 +952,27 @@
   function id(){ return Math.random().toString(36).slice(2,10); }
 
   /* ============================ STORAGE ============================ */
+  // Runs `fn` over `items` with at most `limit` in flight at once, preserving
+  // result order regardless of which finishes first (results[i] is always
+  // written by the task that owns index i). Plain Promise.all would fire
+  // every call at once — fine for a few images, but a wheel with hundreds of
+  // items/clips would slam storage (and, on the Electron build, the IPC
+  // channel to the main process) with that many concurrent reads at once.
+  // Capping concurrency keeps the parallel speedup without the pile-up.
+  async function mapWithConcurrency(items, limit, fn){
+    const results = new Array(items.length);
+    let next = 0;
+    async function worker(){
+      while(next < items.length){
+        const i = next++;
+        results[i] = await fn(items[i], i);
+      }
+    }
+    const workers = Array.from({length: Math.max(1, Math.min(limit, items.length))}, worker);
+    await Promise.all(workers);
+    return results;
+  }
+
   async function loadAll(){
     try{
       const s = await window.storage.get('app-state');
@@ -973,18 +994,19 @@
       const idx = await window.storage.get('custom-sound-index');
       if(idx && idx.value){
         const parsed = JSON.parse(idx.value);
-        for(const d of SOUND_DEFS){
+        await Promise.all(SOUND_DEFS.map(async d=>{
           const metas = parsed[d.key] || [];
-          customSounds[d.key] = [];
-          for(const meta of metas){
+          const clips = await mapWithConcurrency(metas, 6, async meta=>{
             try{
               const clipRes = await window.storage.get('custom-clip:'+meta.id);
               if(clipRes && clipRes.value){
-                customSounds[d.key].push({ id: meta.id, name: meta.name, size: meta.size, dataURL: JSON.parse(clipRes.value) });
+                return { id: meta.id, name: meta.name, size: meta.size, dataURL: JSON.parse(clipRes.value) };
               }
             }catch(e){ /* this one clip is missing/corrupt — skip it */ }
-          }
-        }
+            return null;
+          });
+          customSounds[d.key] = clips.filter(Boolean);
+        }));
       } else {
         // migrate from the older single-key save format, if present
         const legacy = await window.storage.get('custom-sounds');
@@ -1114,14 +1136,13 @@
     try{ await window.storage.delete('item-image:'+itemId); }catch(e){ /* not critical */ }
   }
   async function preloadItemImages(items){
-    for(const item of items){
-      if(item.image && !(item.id in itemImages)){
-        try{
-          const res = await window.storage.get('item-image:'+item.id);
-          itemImages[item.id] = (res && res.value) ? JSON.parse(res.value) : null;
-        }catch(e){ itemImages[item.id] = null; }
-      }
-    }
+    const toLoad = items.filter(item=> item.image && !(item.id in itemImages));
+    await mapWithConcurrency(toLoad, 8, async (item)=>{
+      try{
+        const res = await window.storage.get('item-image:'+item.id);
+        itemImages[item.id] = (res && res.value) ? JSON.parse(res.value) : null;
+      }catch(e){ itemImages[item.id] = null; }
+    });
   }
   async function persistItemWinSound(itemId, dataURL){
     try{ await window.storage.set('item-win-sound:'+itemId, JSON.stringify(dataURL)); return true; }
@@ -1131,15 +1152,14 @@
     try{ await window.storage.delete('item-win-sound:'+itemId); }catch(e){ /* not critical */ }
   }
   async function preloadItemWinSounds(items){
-    for(const item of items){
-      if(item.winSound && !(item.id in itemWinSounds)){
-        try{
-          const res = await window.storage.get('item-win-sound:'+item.id);
-          itemWinSounds[item.id] = (res && res.value) ? JSON.parse(res.value) : null;
-        }catch(e){ itemWinSounds[item.id] = null; }
-        if(itemWinSounds[item.id]) await decodeItemWinSoundBuffer(item.id);
-      }
-    }
+    const toLoad = items.filter(item=> item.winSound && !(item.id in itemWinSounds));
+    await mapWithConcurrency(toLoad, 8, async (item)=>{
+      try{
+        const res = await window.storage.get('item-win-sound:'+item.id);
+        itemWinSounds[item.id] = (res && res.value) ? JSON.parse(res.value) : null;
+      }catch(e){ itemWinSounds[item.id] = null; }
+      if(itemWinSounds[item.id]) await decodeItemWinSoundBuffer(item.id);
+    });
   }
 
   /* ============================ ELEMENTS ============================ */
@@ -1759,6 +1779,30 @@
     });
   }
 
+  // Whether a saved wheel / backup is currently being loaded in the
+  // background. Distinct from `spinning`/`slotSpinning`/`posterSpinning` —
+  // this guards the window where items, images, and sounds are being
+  // populated in stages, before there's a valid, fully-resolved wheel to
+  // spin at all. Spin buttons get genuinely disabled (not just relabeled
+  // "STOP" the way an in-progress spin is) so a click during this window
+  // is a no-op at the browser level rather than something handleSpinPress
+  // has to reason about.
+  let wheelLoading = false;
+  function setWheelLoadingState(loading){
+    wheelLoading = loading;
+    [el.spinBtn, el.slotSpinBtn, el.posterSpinBtn].forEach(btn=>{
+      if(!btn) return;
+      btn.disabled = loading;
+      btn.classList.toggle('loading', loading);
+      if(loading) btn.textContent = '…';
+      else if(!spinning && !slotSpinning && !posterSpinning) btn.textContent = 'SPIN';
+    });
+    el.stageModeBtns.forEach(btn=>{
+      btn.disabled = loading;
+      btn.classList.toggle('disabled', loading);
+    });
+  }
+
   function updateSpinButtonsVisibility(){
     const empty = state.items.length === 0;
     if(el.spinBtn) el.spinBtn.classList.toggle('hidden', empty);
@@ -2161,6 +2205,7 @@
   }
 
   function handleSpinPress(){
+    if(wheelLoading) return;
     if(state.settings.wheelStyle === 'slot'){
       slotSpinning ? cancelSlotSpin() : doSlotSpin();
     } else if(state.settings.wheelStyle === 'poster'){
@@ -2462,6 +2507,7 @@
     return arr;
   }
   el.clearItemsBtn.addEventListener('click', confirmable(el_ => {
+    if(wheelLoading) return;
     abortAnySpin();
     state.items = [];
     renderItems(); drawWheel(); persistState();
@@ -2470,6 +2516,7 @@
   el.wheelName.addEventListener('input', ()=>{ state.wheelName = el.wheelName.value || 'Untitled Wheel'; persistState(); });
 
   el.newWheelBtn.addEventListener('click', confirmable(()=>{
+    if(wheelLoading) return;
     abortAnySpin();
     state.wheelName = 'Untitled Wheel';
     state.items = [];
@@ -3255,18 +3302,16 @@
     }
   }
   async function decodeAllCustomSounds(){
-    for(const def of SOUND_DEFS){
+    // Each category's clips decode with order preserved (mapWithConcurrency
+    // writes into the same index it read from), which matters: playback
+    // code pairs customBuffers[key][i] with customSounds[key][i] by index.
+    await Promise.all(SOUND_DEFS.map(async def=>{
       const clips = customSounds[def.key] || [];
-      customBuffers[def.key] = [];
-      for(const clip of clips){
-        customBuffers[def.key].push(await decodeClipBuffer(clip));
-      }
-    }
+      customBuffers[def.key] = await mapWithConcurrency(clips, 6, clip=> decodeClipBuffer(clip));
+    }));
   }
   async function decodeAllItemWinSounds(){
-    for(const itemId of Object.keys(itemWinSounds)){
-      await decodeItemWinSoundBuffer(itemId);
-    }
+    await mapWithConcurrency(Object.keys(itemWinSounds), 6, itemId=> decodeItemWinSoundBuffer(itemId));
   }
   // Per-key logical clock + last-picked tick per clip id, used to softly penalize
   // recently-played clips rather than repeating a small pool back-to-back.
@@ -3789,23 +3834,47 @@
       const loadBtn = document.createElement('button');
       loadBtn.className = 'btn small primary'; loadBtn.textContent = 'Load';
       loadBtn.addEventListener('click', async ()=>{
+        if(wheelLoading) return; // a load is already in flight — ignore until it settles
         abortAnySpin(); // must happen before state is replaced — see abortAnySpin's comment
-        state = JSON.parse(JSON.stringify(cfg));
-        // each saved wheel keeps its own clip references (see saveWheelBtn below) —
-        // resolve those back into playable clips instead of leaving whatever custom
-        // sounds happened to be active for the previously-loaded wheel.
-        customSounds = await resolveWheelCustomSounds(cfg);
-        customBuffers = { music: [], tick: [], win: [], spinStart: [] };
-        await decodeAllCustomSounds();
-        backfillState(); // a wheel saved with an older app version may be missing newer sound/settings fields — also sets uiPaletteGroup
-        el.wheelName.value = state.wheelName;
-        await preloadItemImages(state.items);
-        await preloadItemWinSounds(state.items);
-        syncSettingsUI(); syncSoundUI(); renderPaletteGroupSelect(); renderPaletteGrid();
-        renderItems(); applyWheelStyle(); persistState();
-        await persistClipIndex(); // so this wheel's clips are what a page reload picks back up
-        if(state.settings.idleSpin) startIdleSpin(); else stopIdleSpin();
+        setWheelLoadingState(true);
         switchTab('items');
+        try{
+          // STAGE 1 — swap in the cheap, already-in-memory part of the saved
+          // wheel (items, weights, colors, settings) and paint immediately.
+          // This is what makes the switch feel instant: the wheel/slot/
+          // poster and the items list reflect the new wheel right away,
+          // items with images just show their gradient placeholder card
+          // until stage 2 fills the real artwork in.
+          state = JSON.parse(JSON.stringify(cfg));
+          backfillState(); // a wheel saved with an older app version may be missing newer sound/settings fields — also sets uiPaletteGroup
+          el.wheelName.value = state.wheelName;
+          syncSettingsUI(); renderPaletteGroupSelect(); renderPaletteGrid();
+          renderItems(); applyWheelStyle(); persistState();
+
+          // STAGE 2 — item images, fetched in parallel (see
+          // preloadItemImages), then a single repaint once they're all in.
+          await preloadItemImages(state.items);
+          renderItems(); applyWheelStyle();
+
+          // STAGE 3 — audio: this wheel's own custom clip library plus any
+          // per-item winner-sound overrides, both fetched/decoded in
+          // parallel. Nothing here changes what's on screen (the 🔔 icon in
+          // the items list already reflects state.items from stage 1), so
+          // there's no repaint — this stage exists purely to finish
+          // loading sound before spins are allowed again.
+          customSounds = await resolveWheelCustomSounds(cfg); // each saved wheel keeps its own clip references (see saveWheelBtn below)
+          customBuffers = { music: [], tick: [], win: [], spinStart: [] };
+          await Promise.all([
+            decodeAllCustomSounds(),
+            preloadItemWinSounds(state.items)
+          ]);
+          syncSoundUI();
+          await persistClipIndex(); // so this wheel's clips are what a page reload picks back up
+
+          if(state.settings.idleSpin) startIdleSpin(); else stopIdleSpin();
+        } finally {
+          setWheelLoadingState(false);
+        }
       });
       const delBtn = document.createElement('button');
       delBtn.className = 'btn small danger'; delBtn.textContent = 'Delete';
@@ -3823,13 +3892,13 @@
   async function resolveWheelCustomSounds(wheelCfg){
     const resolved = { music: [], tick: [], win: [], spinStart: [] };
     const refs = wheelCfg.customSounds || {};
-    for(const d of SOUND_DEFS){
+    await Promise.all(SOUND_DEFS.map(async d=>{
       const list = Array.isArray(refs[d.key]) ? refs[d.key] : [];
-      for(const ref of list){
-        const dataURL = await fetchClipDataURL(ref.id);
-        if(dataURL) resolved[d.key].push({ id: ref.id, name: ref.name, size: ref.size, dataURL });
-      }
-    }
+      const dataURLs = await mapWithConcurrency(list, 6, ref=> fetchClipDataURL(ref.id));
+      resolved[d.key] = list
+        .map((ref, i)=> dataURLs[i] ? { id: ref.id, name: ref.name, size: ref.size, dataURL: dataURLs[i] } : null)
+        .filter(Boolean);
+    }));
     return resolved;
   }
   el.saveWheelBtn.addEventListener('click', ()=>{
@@ -3984,6 +4053,7 @@
   }
 
   async function importSettingsFromFile(file){
+    if(wheelLoading) return; // a load is already in flight — ignore until it settles
     let payload;
     try{
       const text = await file.text();
@@ -4002,84 +4072,84 @@
 
     // stop anything currently playing/spinning before swapping everything out from under it
     abortAnySpin();
-    stopWhir();
-    stopActivePreview();
+    setWheelLoadingState(true);
+    try{
+      stopWhir();
+      stopActivePreview();
 
-    Object.assign(state, payload.state);
-    savedWheels = (payload.savedWheels && typeof payload.savedWheels === 'object') ? payload.savedWheels : {};
-    customPalettes = (payload.customPalettes && typeof payload.customPalettes === 'object') ? payload.customPalettes : {};
+      // STAGE 1 — a backup carries every dataURL inline, so all of this is
+      // pure in-memory bookkeeping with no storage round trips yet. Paint
+      // immediately once it's in place, same as the saved-wheel Load flow.
+      Object.assign(state, payload.state);
+      savedWheels = (payload.savedWheels && typeof payload.savedWheels === 'object') ? payload.savedWheels : {};
+      customPalettes = (payload.customPalettes && typeof payload.customPalettes === 'object') ? payload.customPalettes : {};
 
-    itemImages = {};
-    if(payload.itemImages && typeof payload.itemImages === 'object'){
-      Object.keys(payload.itemImages).forEach(k=>{ itemImages[k] = payload.itemImages[k]; });
-    }
-
-    itemWinSounds = {};
-    itemWinSoundBuffers = {};
-    if(payload.itemWinSounds && typeof payload.itemWinSounds === 'object'){
-      Object.keys(payload.itemWinSounds).forEach(k=>{ itemWinSounds[k] = payload.itemWinSounds[k]; });
-    }
-
-    // v2 backups carry a flat clip library (one entry per unique clip, full audio data)
-    // plus lightweight id references from the current session and each saved wheel.
-    // v1 backups (from before per-wheel clip support) only had one flat customSounds
-    // set with the data inline — treat that as both the library and the current refs.
-    customSounds = { music: [], tick: [], win: [], spinStart: [] };
-    customBuffers = { music: [], tick: [], win: [], spinStart: [] };
-    if(payload.clipLibrary){
-      for(const clipId of Object.keys(payload.clipLibrary)){
-        await persistClip(payload.clipLibrary[clipId]); // writes custom-clip:<id>
+      itemImages = {};
+      if(payload.itemImages && typeof payload.itemImages === 'object'){
+        Object.keys(payload.itemImages).forEach(k=>{ itemImages[k] = payload.itemImages[k]; });
       }
-      const refs = payload.currentCustomSoundRefs || {};
-      SOUND_DEFS.forEach(d=>{
-        const list = Array.isArray(refs[d.key]) ? refs[d.key] : [];
-        customSounds[d.key] = list.map(ref=>{
-          const lib = payload.clipLibrary[ref.id];
-          return lib ? { id: ref.id, name: lib.name, size: lib.size, dataURL: lib.dataURL } : null;
-        }).filter(Boolean);
-      });
-    } else if(payload.customSounds){ // old v1 backup — flat clips with inline data, no per-wheel refs
-      SOUND_DEFS.forEach(d=>{
-        const clips = Array.isArray(payload.customSounds[d.key]) ? payload.customSounds[d.key] : [];
-        customSounds[d.key] = clips.map(c=> ({ id: c.id || id(), name: c.name, size: c.size, dataURL: c.dataURL }));
-      });
-    }
 
-    backfillState();
-
-    // persist everything we just swapped in
-    persistState();
-    await persistSavedWheels();
-    await persistCustomPalettes();
-    await persistClipIndex();
-    if(!payload.clipLibrary){
-      // v1 fallback path — clipLibrary already persists clips itself above, this
-      // only runs for the older flat-customSounds format
-      for(const d of SOUND_DEFS){
-        for(const clip of customSounds[d.key]){ await persistClip(clip); }
+      itemWinSounds = {};
+      itemWinSoundBuffers = {};
+      if(payload.itemWinSounds && typeof payload.itemWinSounds === 'object'){
+        Object.keys(payload.itemWinSounds).forEach(k=>{ itemWinSounds[k] = payload.itemWinSounds[k]; });
       }
-    }
-    for(const itemId of Object.keys(itemImages)){
-      if(itemImages[itemId]) await persistItemImage(itemId, itemImages[itemId]);
-    }
-    for(const itemId of Object.keys(itemWinSounds)){
-      if(itemWinSounds[itemId]) await persistItemWinSound(itemId, itemWinSounds[itemId]);
-    }
-    await decodeAllCustomSounds();
-    await decodeAllItemWinSounds();
 
-    // refresh every part of the UI that reads from state/customSounds/etc.
-    el.wheelName.value = state.wheelName;
-    syncSettingsUI();
-    syncSoundUI();
-    renderPaletteGroupSelect();
-    renderPaletteGrid();
-    renderPaletteBuilder();
-    renderItems();
-    renderSaved();
-    fitCanvas();
-    applyWheelStyle();
-    flashMessage('Settings imported.', 'Imported');
+      // v2 backups carry a flat clip library (one entry per unique clip, full audio data)
+      // plus lightweight id references from the current session and each saved wheel.
+      // v1 backups (from before per-wheel clip support) only had one flat customSounds
+      // set with the data inline — treat that as both the library and the current refs.
+      customSounds = { music: [], tick: [], win: [], spinStart: [] };
+      customBuffers = { music: [], tick: [], win: [], spinStart: [] };
+      if(payload.clipLibrary){
+        const refs = payload.currentCustomSoundRefs || {};
+        SOUND_DEFS.forEach(d=>{
+          const list = Array.isArray(refs[d.key]) ? refs[d.key] : [];
+          customSounds[d.key] = list.map(ref=>{
+            const lib = payload.clipLibrary[ref.id];
+            return lib ? { id: ref.id, name: lib.name, size: lib.size, dataURL: lib.dataURL } : null;
+          }).filter(Boolean);
+        });
+      } else if(payload.customSounds){ // old v1 backup — flat clips with inline data, no per-wheel refs
+        SOUND_DEFS.forEach(d=>{
+          const clips = Array.isArray(payload.customSounds[d.key]) ? payload.customSounds[d.key] : [];
+          customSounds[d.key] = clips.map(c=> ({ id: c.id || id(), name: c.name, size: c.size, dataURL: c.dataURL }));
+        });
+      }
+
+      backfillState();
+      el.wheelName.value = state.wheelName;
+      syncSettingsUI(); renderPaletteGroupSelect(); renderPaletteGrid(); renderPaletteBuilder();
+      renderItems(); renderSaved(); fitCanvas(); applyWheelStyle();
+      persistState();
+
+      // STAGE 2 — decode audio from the in-memory dataURLs above (so this
+      // doesn't wait on storage) and persist everything to disk, all in
+      // parallel. Persistence here is purely for durability — nothing on
+      // screen depends on any of these writes finishing — so it runs
+      // alongside the decode instead of blocking it.
+      const persistJobs = [ persistSavedWheels(), persistCustomPalettes(), persistClipIndex() ];
+      if(payload.clipLibrary){
+        persistJobs.push(mapWithConcurrency(Object.keys(payload.clipLibrary), 6, clipId=> persistClip(payload.clipLibrary[clipId])));
+      } else {
+        // v1 fallback path — clipLibrary already persists clips itself above, this
+        // only runs for the older flat-customSounds format
+        SOUND_DEFS.forEach(d=> persistJobs.push(mapWithConcurrency(customSounds[d.key], 6, clip=> persistClip(clip))));
+      }
+      persistJobs.push(mapWithConcurrency(Object.keys(itemImages).filter(k=> itemImages[k]), 8, itemId=> persistItemImage(itemId, itemImages[itemId])));
+      persistJobs.push(mapWithConcurrency(Object.keys(itemWinSounds).filter(k=> itemWinSounds[k]), 8, itemId=> persistItemWinSound(itemId, itemWinSounds[itemId])));
+
+      await Promise.all([
+        decodeAllCustomSounds(),
+        decodeAllItemWinSounds(),
+        ...persistJobs
+      ]);
+
+      syncSoundUI();
+      flashMessage('Settings imported.', 'Imported');
+    } finally {
+      setWheelLoadingState(false);
+    }
   }
 
   el.exportSettingsBtn.addEventListener('click', exportSettings);
