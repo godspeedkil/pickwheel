@@ -2462,6 +2462,7 @@
     return arr;
   }
   el.clearItemsBtn.addEventListener('click', confirmable(el_ => {
+    abortAnySpin();
     state.items = [];
     renderItems(); drawWheel(); persistState();
   }, 'Clear all', 'Really clear?'));
@@ -2469,6 +2470,7 @@
   el.wheelName.addEventListener('input', ()=>{ state.wheelName = el.wheelName.value || 'Untitled Wheel'; persistState(); });
 
   el.newWheelBtn.addEventListener('click', confirmable(()=>{
+    abortAnySpin();
     state.wheelName = 'Untitled Wheel';
     state.items = [];
     el.wheelName.value = state.wheelName;
@@ -3680,6 +3682,26 @@
     flashMessage('Spin cancelled', 'Cancelled');
   }
 
+  // Force-stops whichever picker style is currently mid-spin. Any action that
+  // swaps out state.items/state.settings/customSounds/itemImages from under
+  // a running spin — loading a saved wheel, importing a backup, starting a
+  // new wheel, clearing all items — needs to call this FIRST. Without it,
+  // the in-flight animation loop keeps running against data that's being
+  // replaced underneath it: reels don't refresh (the idle re-render is
+  // gated on the spin flag being false), and when the loop finally tries to
+  // land on a winner that no longer matches the live state, it can throw
+  // inside the requestAnimationFrame callback — which has no error
+  // handling, so the loop just dies. That leaves the spin flag stuck true
+  // (Spin button stuck on "STOP", style switching blocked) and the spin
+  // whir playing forever, since it's a self-looping audio node independent
+  // of the animation loop and only stopWhir() (called from the various
+  // finish/abort paths) ever silences it.
+  function abortAnySpin(){
+    if(spinning) abortSpin();
+    if(slotSpinning) abortSlotSpin();
+    if(posterSpinning) abortPosterSpin();
+  }
+
   function finishSpin(winnerItem, winnerIdx){
     spinning = false;
     rafId = null;
@@ -3767,6 +3789,7 @@
       const loadBtn = document.createElement('button');
       loadBtn.className = 'btn small primary'; loadBtn.textContent = 'Load';
       loadBtn.addEventListener('click', async ()=>{
+        abortAnySpin(); // must happen before state is replaced — see abortAnySpin's comment
         state = JSON.parse(JSON.stringify(cfg));
         // each saved wheel keeps its own clip references (see saveWheelBtn below) —
         // resolve those back into playable clips instead of leaving whatever custom
@@ -3779,7 +3802,7 @@
         await preloadItemImages(state.items);
         await preloadItemWinSounds(state.items);
         syncSettingsUI(); syncSoundUI(); renderPaletteGroupSelect(); renderPaletteGrid();
-        renderItems(); drawWheel(); persistState();
+        renderItems(); applyWheelStyle(); persistState();
         await persistClipIndex(); // so this wheel's clips are what a page reload picks back up
         if(state.settings.idleSpin) startIdleSpin(); else stopIdleSpin();
         switchTab('items');
@@ -3978,7 +4001,7 @@
     }
 
     // stop anything currently playing/spinning before swapping everything out from under it
-    if(spinning) abortSpin();
+    abortAnySpin();
     stopWhir();
     stopActivePreview();
 
@@ -4055,7 +4078,7 @@
     renderItems();
     renderSaved();
     fitCanvas();
-    drawWheel();
+    applyWheelStyle();
     flashMessage('Settings imported.', 'Imported');
   }
 
