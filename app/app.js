@@ -1033,7 +1033,8 @@
     SOUND_DEFS.forEach(d=>{
       if(typeof state.sound.volumes[d.key] !== 'number') state.sound.volumes[d.key] = 0.5;
     });
-    if(state.settings.wheelStyle !== 'wheel' && state.settings.wheelStyle !== 'slot') state.settings.wheelStyle = 'wheel';
+    if(!['wheel','slot','poster'].includes(state.settings.wheelStyle)) state.settings.wheelStyle = 'wheel';
+    if(typeof state.settings.posterLabelCharLimit !== 'number') state.settings.posterLabelCharLimit = 40;
     if(typeof state.settings.nearMiss !== 'boolean') state.settings.nearMiss = false;
     if(typeof state.settings.slotLabelCharLimit !== 'number') state.settings.slotLabelCharLimit = 24;
     if(typeof state.settings.slotLabelFontSize !== 'number') state.settings.slotLabelFontSize = 26;
@@ -1151,6 +1152,11 @@
     slotPayline: document.getElementById('slotPayline'),
     slotSpinBtn: document.getElementById('slotSpinBtn'),
     slotStrips: [document.getElementById('slotStrip0')],
+    posterWrap: document.getElementById('posterWrap'),
+    posterWindow: document.getElementById('posterWindow'),
+    posterSpotlight: document.getElementById('posterSpotlight'),
+    posterSpinBtn: document.getElementById('posterSpinBtn'),
+    posterStrips: [document.getElementById('posterStrip0')],
     stageFoot: document.getElementById('stageFoot'),
     titleFontSelect: document.getElementById('titleFontSelect'),
     wheelTitleSizeRange: document.getElementById('wheelTitleSizeRange'),
@@ -1302,7 +1308,7 @@
   let idleRafId = null;
   let idleLastTime = null;
   function idleSpinFrame(now){
-    if(!state.settings.idleSpin || spinning || state.settings.wheelStyle === 'slot'){
+    if(!state.settings.idleSpin || spinning || state.settings.wheelStyle !== 'wheel'){
       idleRafId = null; idleLastTime = null;
       return;
     }
@@ -1314,7 +1320,7 @@
     idleRafId = requestAnimationFrame(idleSpinFrame);
   }
   function startIdleSpin(){
-    if(idleRafId != null || !state.settings.idleSpin || spinning || state.settings.wheelStyle === 'slot') return;
+    if(idleRafId != null || !state.settings.idleSpin || spinning || state.settings.wheelStyle !== 'wheel') return;
     idleLastTime = null;
     idleRafId = requestAnimationFrame(idleSpinFrame);
   }
@@ -1421,6 +1427,10 @@
     updateSpinButtonsVisibility();
     if(state.settings.wheelStyle === 'slot'){
       if(!slotSpinning) renderSlotIdle();
+      return;
+    }
+    if(state.settings.wheelStyle === 'poster'){
+      if(!posterSpinning) renderPosterIdle();
       return;
     }
     const size = el.canvas.clientWidth;
@@ -1636,20 +1646,15 @@
     div.style.height = heightPx + 'px';
     const idx = state.items.indexOf(item);
     const color = colorFor(item, idx < 0 ? 0 : idx);
-    const imgSrc = itemImages[item.id];
     div.style.background = color;
-    if(imgSrc){
-      const img = document.createElement('img');
-      img.src = imgSrc; img.alt = '';
-      div.appendChild(img);
-    } else {
-      div.style.color = readableTextColor(color);
-      const span = document.createElement('span');
-      span.className = 'slot-symbol-label';
-      span.style.fontSize = state.settings.slotLabelFontSize + 'px';
-      span.textContent = truncate(item.label || '—', state.settings.slotLabelCharLimit);
-      div.appendChild(span);
-    }
+    // slot symbols are always text — per-item artwork is reserved for the
+    // poster reel, so an uploaded item image is intentionally ignored here.
+    div.style.color = readableTextColor(color);
+    const span = document.createElement('span');
+    span.className = 'slot-symbol-label';
+    span.style.fontSize = state.settings.slotLabelFontSize + 'px';
+    span.textContent = truncate(item.label || '—', state.settings.slotLabelCharLimit);
+    div.appendChild(span);
     return div;
   }
 
@@ -1696,20 +1701,37 @@
     // last element is still the best available guess for "the row above."
     const topColorGuess = mainSeq.length ? colorMap.get(mainSeq[mainSeq.length-1]) : null;
     const filler = pickFiller(pool, [winnerColor, topColorGuess].filter(c=> c != null), colorMap);
-    const strip = [...mainSeq, winnerItem, filler];
+    // a second trailing filler, purely as scroll buffer: the near-miss
+    // wobble can overshoot slightly past the resting point before nudging
+    // back, which needs a real symbol to reveal past the first filler — a
+    // single trailing row isn't enough, and without a second one that
+    // overshoot exposes bare reel background where a symbol should be,
+    // breaking the illusion of a continuous strip right at the moment it
+    // matters most (the final hesitation). Same fix as the poster reel.
+    const filler2 = pickFiller(pool, [winnerColor, colorMap.get(filler)].filter(c=> c != null), colorMap);
+    const strip = [...mainSeq, winnerItem, filler, filler2];
     // repair mainSeq's positions (0..mainSeq.length-1) in place; the winner
-    // and filler are checked against but never moved, since their final
-    // positions are what the landing animation targets
+    // and both fillers are checked against but never moved, since their
+    // final positions are what the landing animation targets
     removeWindowRepeats(strip, colorMap, mainSeq.length);
     return strip;
   }
 
   function setSpinButtonsState(running){
     const label = running ? 'STOP' : 'SPIN';
-    [el.spinBtn, el.slotSpinBtn].forEach(btn=>{
+    [el.spinBtn, el.slotSpinBtn, el.posterSpinBtn].forEach(btn=>{
       if(!btn) return;
       btn.textContent = label;
       btn.classList.toggle('stopping', running);
+    });
+    // switching wheel styles mid-spin left the app in an inconsistent
+    // state (two animation loops fighting over the same shared timers/DOM,
+    // or a spin left dangling with no way to land) — simplest fix is to
+    // just not allow it while any spin is in flight, for any of the three
+    // styles.
+    el.stageModeBtns.forEach(btn=>{
+      btn.disabled = running;
+      btn.classList.toggle('disabled', running);
     });
   }
 
@@ -1717,6 +1739,7 @@
     const empty = state.items.length === 0;
     if(el.spinBtn) el.spinBtn.classList.toggle('hidden', empty);
     if(el.slotSpinBtn) el.slotSpinBtn.classList.toggle('hidden', empty);
+    if(el.posterSpinBtn) el.posterSpinBtn.classList.toggle('hidden', empty);
   }
 
   // Shared by both the wheel and the slot reel: eases most of the way to a
@@ -1792,7 +1815,7 @@
     const reels = el.slotStrips.map((stripEl, i)=>{
       const strip = buildReelStrip(pool, winnerItem, colorMap);
       renderReelStrip(stripEl, strip, heightPx);
-      const winnerPos = strip.length - 2; // second-to-last: leaves one filler symbol visible below the payline
+      const winnerPos = strip.length - 3; // third-to-last: leaves two filler symbols as scroll buffer below the payline
       const targetY = -(winnerPos - 1) * heightPx; // -1 row so the winner lands in the middle (payline) row
       const dur = baseDuration + i*stagger;
       let timeline = null;
@@ -1862,9 +1885,262 @@
     finishSpin(winnerItem, winnerIdx); // shared winner banner, confetti, sound, and history logic
   }
 
+  /* ============================ MOVIE POSTER PICKER ============================ */
+  // A third affordance for the exact same pick: a single horizontal reel of
+  // item "posters" scrolls left-to-right and lands the weighted-random
+  // winner in the center spotlight, then that poster zooms in place and
+  // reveals the item's name as a caption. Odds, sounds, history, and the
+  // shared winner banner are unchanged from the wheel/slot — only the
+  // reveal itself differs, and it always moves along the X axis instead of Y.
+  const POSTER_VISIBLE_COLS = 3; // columns visible in the reel; the middle one is the spotlight
+  // How many posters the reel travels through before landing, independent
+  // of pool size. A fixed loop count (pool.length * N) made big wheels
+  // scroll through way more cards in the same duration than small ones —
+  // the more items you had, the blurrier and less readable the spin got,
+  // even at the slowest duration setting. Targeting a roughly constant
+  // total travel distance keeps the poster on screen long enough to
+  // actually register at any pool size or duration.
+  const POSTER_TARGET_TRAVEL = 14;
+
+  let posterSpinning = false;
+  let posterCancelRequested = false;
+  let posterRafId = null;
+
+  function posterWeightedPool(){
+    return state.items.filter(it=> (Math.max(0, Number(it.weight)||0)) > 0);
+  }
+
+  function getPosterCardWidth(){
+    const reel = el.posterWindow ? el.posterWindow.querySelector('.poster-reel') : null;
+    const w = reel ? reel.getBoundingClientRect().width : 0;
+    // rounded to a whole pixel for the same reason the slot reel rounds its
+    // row height — translateX is composited on its own layer and can snap
+    // to the nearest device pixel independently of the spotlight's
+    // percentage-based CSS sizing otherwise.
+    return w > 0 ? Math.round(w / POSTER_VISIBLE_COLS) : 140;
+  }
+
+  function positionSpotlight(widthPx){
+    if(!el.posterSpotlight) return;
+    el.posterSpotlight.style.left = widthPx + 'px';
+    el.posterSpotlight.style.width = widthPx + 'px';
+  }
+
+  function buildPosterCardEl(item, widthPx){
+    const div = document.createElement('div');
+    div.className = 'poster-card';
+    div.style.width = widthPx + 'px';
+    const inner = document.createElement('div');
+    inner.className = 'poster-card-inner';
+    const idx = state.items.indexOf(item);
+    const color = colorFor(item, idx < 0 ? 0 : idx);
+    const imgSrc = itemImages[item.id];
+    if(imgSrc){
+      const img = document.createElement('img');
+      img.src = imgSrc; img.alt = '';
+      inner.appendChild(img);
+    } else {
+      // no image on file for this item — fall back to a generated
+      // "poster" card (gradient + title) rather than leaving it blank,
+      // so the reel always reads as a row of posters either way.
+      const ph = document.createElement('div');
+      ph.className = 'poster-placeholder';
+      ph.style.background = `linear-gradient(160deg, ${color}, #14121f 130%)`;
+      ph.style.color = readableTextColor(color);
+      const icon = document.createElement('div');
+      icon.className = 'poster-placeholder-icon';
+      icon.textContent = '🎬';
+      const title = document.createElement('div');
+      title.className = 'poster-placeholder-title';
+      title.textContent = truncate(item.label || '—', state.settings.posterLabelCharLimit);
+      const tag = document.createElement('div');
+      tag.className = 'poster-placeholder-tag';
+      tag.textContent = 'Now Picking';
+      ph.appendChild(icon); ph.appendChild(title); ph.appendChild(tag);
+      inner.appendChild(ph);
+    }
+    const caption = document.createElement('div');
+    caption.className = 'poster-caption';
+    caption.textContent = item.label || '—';
+    inner.appendChild(caption);
+    div.appendChild(inner);
+    return div;
+  }
+
+  function renderPosterStrip(stripEl, items, widthPx){
+    stripEl.innerHTML = '';
+    stripEl.style.transform = 'translateX(0px)';
+    const frag = document.createDocumentFragment();
+    items.forEach(it=> frag.appendChild(buildPosterCardEl(it, widthPx)));
+    stripEl.appendChild(frag);
+  }
+
+  function renderPosterIdle(){
+    const pool = posterWeightedPool();
+    const widthPx = getPosterCardWidth();
+    positionSpotlight(widthPx);
+    const colorMap = buildColorMap();
+    el.posterStrips.forEach(stripEl=>{
+      if(!stripEl) return;
+      if(pool.length === 0){
+        stripEl.innerHTML = '';
+        stripEl.style.transform = 'translateX(0px)';
+        const placeholder = document.createElement('div');
+        placeholder.className = 'poster-card poster-card-empty';
+        placeholder.style.width = widthPx + 'px';
+        placeholder.textContent = 'Add items to load the marquee';
+        stripEl.appendChild(placeholder);
+        return;
+      }
+      const loops = Math.max(1, Math.ceil(POSTER_VISIBLE_COLS/pool.length));
+      const seq = shuffledCopy(Array.from({length: loops}).flatMap(()=> pool));
+      removeWindowRepeats(seq, colorMap);
+      renderPosterStrip(stripEl, seq.slice(0, POSTER_VISIBLE_COLS), widthPx);
+    });
+  }
+
+  function buildPosterStrip(pool, winnerItem, colorMap){
+    const winnerColor = colorMap.get(winnerItem);
+    // at least 2 full passes so the reel still feels shuffled even for a
+    // tiny pool, but never so many passes that a large pool blows way past
+    // the target travel distance
+    const loops = Math.max(2, Math.ceil(POSTER_TARGET_TRAVEL / pool.length));
+    const mainSeq = shuffledCopy(Array.from({length: loops}).flatMap(()=> pool));
+    // same reasoning as the slot reel's filler: this needs to differ from
+    // both the winner AND whatever card lands just before it, or a
+    // straddling repeat (before === after, with the winner sandwiched
+    // between) slips back in even though no two cards are directly adjacent.
+    const beforeColorGuess = mainSeq.length ? colorMap.get(mainSeq[mainSeq.length-1]) : null;
+    const filler = pickFiller(pool, [winnerColor, beforeColorGuess].filter(c=> c != null), colorMap);
+    // a second trailing filler, purely as scroll buffer: the near-miss
+    // wobble can overshoot slightly PAST the resting point before nudging
+    // back, which needs a real poster to reveal past the first filler — a
+    // single trailing card isn't enough, and without a second one that
+    // overshoot exposes bare reel background where a poster should be,
+    // breaking the illusion of a continuous strip right at the moment it
+    // matters most (the final hesitation).
+    const filler2 = pickFiller(pool, [winnerColor, colorMap.get(filler)].filter(c=> c != null), colorMap);
+    const strip = [...mainSeq, winnerItem, filler, filler2];
+    // repair mainSeq's positions in place; winner and both fillers are
+    // checked against but never moved, since their final positions are
+    // what the landing animation targets
+    removeWindowRepeats(strip, colorMap, mainSeq.length);
+    return strip;
+  }
+
+  function doPosterSpin(){
+    if(posterSpinning) return;
+    stopActivePreview();
+    const pool = posterWeightedPool();
+    if(pool.length < 2){
+      flashMessage('Add at least two items with weight > 0 to spin.', 'Notice');
+      return;
+    }
+    posterSpinning = true;
+    posterCancelRequested = false;
+    clearTimeout(flashTimer);
+    setSpinButtonsState(true);
+    el.winnerBanner.classList.remove('show');
+    stopWinSound();
+    playSpinStart();
+
+    const winnerIdx = pickWeightedIndex();
+    const winnerItem = state.items[winnerIdx];
+    const widthPx = getPosterCardWidth();
+    positionSpotlight(widthPx);
+    const colorMap = buildColorMap();
+    const ease = easeFn(state.settings.easing);
+    const baseDuration = state.settings.duration*1000;
+    const stagger = 320; // ms of extra spin time per reel, in case a future style uses more than one
+
+    const reels = el.posterStrips.map((stripEl, i)=>{
+      const strip = buildPosterStrip(pool, winnerItem, colorMap);
+      renderPosterStrip(stripEl, strip, widthPx);
+      const winnerPos = strip.length - 3; // third-to-last: leaves two filler posters as scroll buffer past the spotlight
+      const targetX = -(winnerPos - 1) * widthPx; // -1 column so the winner lands in the middle (spotlight) column
+      const dur = baseDuration + i*stagger;
+      let timeline = null;
+      if(state.settings.nearMiss && strip.length > 2){
+        const direction = Math.random() < 0.5 ? 1 : -1;
+        const wobbleFraction = 0.3 + Math.random()*0.4;
+        const decoyX = targetX + direction*widthPx*wobbleFraction;
+        timeline = buildNearMissTimeline(0, decoyX, targetX, dur, ease, false);
+      }
+      return { stripEl, strip, targetX, dur, timeline, lastTickStep: 0 };
+    });
+
+    const overallTotalDuration = Math.max(...reels.map(r=> r.timeline ? r.timeline.totalDuration : r.dur));
+    const startTime = performance.now();
+    startWhir();
+
+    function frame(now){
+      if(posterCancelRequested){ abortPosterSpin(); return; }
+      const elapsed = now-startTime;
+      let allDone = true;
+      reels.forEach(reel=>{
+        const reelTotal = reel.timeline ? reel.timeline.totalDuration : reel.dur;
+        if(elapsed < reelTotal) allDone = false;
+        const x = reel.timeline ? reel.timeline.valueAt(Math.min(elapsed, reelTotal)) : reel.targetX*ease(Math.min(1, elapsed/reel.dur));
+        reel.stripEl.style.transform = `translateX(${x}px)`;
+        const step = Math.floor(Math.abs(x) / widthPx);
+        if(step > reel.lastTickStep){
+          playTick();
+          reel.lastTickStep = step;
+        }
+      });
+      const overallT = Math.min(1, elapsed/overallTotalDuration);
+      updateWhir(Math.max(0, 1 - overallT));
+
+      if(!allDone){
+        posterRafId = requestAnimationFrame(frame);
+      } else {
+        reels.forEach(reel=>{
+          reel.stripEl.style.transform = `translateX(${reel.targetX}px)`;
+          // the winner poster is always the third-to-last card in the
+          // strip (two filler posters trail it as scroll buffer) — zoom it
+          // in place first, then hand off to the shared winner banner a
+          // beat later so the in-reel zoom actually reads before the
+          // ribbon appears.
+          const cards = reel.stripEl.querySelectorAll('.poster-card-inner');
+          const winnerCard = cards[reel.strip.length - 3];
+          if(winnerCard) winnerCard.classList.add('poster-winner');
+        });
+        finishPosterSpin(winnerItem, winnerIdx);
+      }
+    }
+    posterRafId = requestAnimationFrame(frame);
+  }
+
+  function cancelPosterSpin(){
+    if(!posterSpinning) return;
+    posterCancelRequested = true;
+  }
+
+  function abortPosterSpin(){
+    if(posterRafId) cancelAnimationFrame(posterRafId);
+    posterRafId = null;
+    posterSpinning = false;
+    posterCancelRequested = false;
+    stopWhir();
+    setSpinButtonsState(false);
+    flashMessage('Spin cancelled', 'Cancelled');
+  }
+
+  function finishPosterSpin(winnerItem, winnerIdx){
+    posterSpinning = false;
+    posterRafId = null;
+    setSpinButtonsState(false);
+    // let the poster's own zoom-in play for a beat before the shared
+    // winner banner (confetti, sound, history) takes over — otherwise both
+    // reveals land in the same frame and the zoom is barely visible.
+    setTimeout(()=> finishSpin(winnerItem, winnerIdx), 420);
+  }
+
   function handleSpinPress(){
     if(state.settings.wheelStyle === 'slot'){
       slotSpinning ? cancelSlotSpin() : doSlotSpin();
+    } else if(state.settings.wheelStyle === 'poster'){
+      posterSpinning ? cancelPosterSpin() : doPosterSpin();
     } else {
       spinning ? cancelSpin() : doSpin();
     }
@@ -1872,16 +2148,23 @@
 
   const WHEEL_STAGE_FOOT = 'Tap <b>SPIN</b> or press <b>Space</b> to go — tap again to cancel mid-spin. The wheel picks a weighted-random winner the instant you spin; the animation just shows you the result.';
   const SLOT_STAGE_FOOT = 'Tap <b>SPIN</b> or press <b>Space</b> to pull the reel — tap again to cancel mid-spin. The winner is picked the instant you spin; the reel just shows you the result.';
+  const POSTER_STAGE_FOOT = 'Tap <b>SPIN</b> or press <b>Space</b> to roll the marquee — tap again to cancel mid-spin. The winner is picked the instant you spin; the poster just zooms in to show you the result.';
 
   function applyWheelStyle(){
-    const isSlot = state.settings.wheelStyle === 'slot';
-    if(el.wheelWrap) el.wheelWrap.classList.toggle('hidden', isSlot);
+    const style = state.settings.wheelStyle;
+    const isSlot = style === 'slot';
+    const isPoster = style === 'poster';
+    if(el.wheelWrap) el.wheelWrap.classList.toggle('hidden', isSlot || isPoster);
     if(el.slotWrap) el.slotWrap.classList.toggle('hidden', !isSlot);
-    if(el.stageFoot) el.stageFoot.innerHTML = isSlot ? SLOT_STAGE_FOOT : WHEEL_STAGE_FOOT;
-    el.stageModeBtns.forEach(btn=> btn.classList.toggle('active', btn.dataset.style === state.settings.wheelStyle));
+    if(el.posterWrap) el.posterWrap.classList.toggle('hidden', !isPoster);
+    if(el.stageFoot) el.stageFoot.innerHTML = isSlot ? SLOT_STAGE_FOOT : (isPoster ? POSTER_STAGE_FOOT : WHEEL_STAGE_FOOT);
+    el.stageModeBtns.forEach(btn=> btn.classList.toggle('active', btn.dataset.style === style));
     if(isSlot){
       stopIdleSpin();
       renderSlotIdle();
+    } else if(isPoster){
+      stopIdleSpin();
+      renderPosterIdle();
     } else {
       fitCanvas();
       if(state.settings.idleSpin) startIdleSpin();
@@ -1891,6 +2174,10 @@
 
   el.stageModeBtns.forEach(btn=>{
     btn.addEventListener('click', ()=>{
+      if(spinning || slotSpinning || posterSpinning){
+        flashMessage('Finish or cancel the current spin before switching wheel styles.', 'Notice');
+        return;
+      }
       if(state.settings.wheelStyle === btn.dataset.style) return;
       state.settings.wheelStyle = btn.dataset.style;
       persistState();
@@ -1901,6 +2188,7 @@
   window.addEventListener('resize', ()=>{
     fitCanvas();
     if(state.settings.wheelStyle === 'slot' && !slotSpinning) renderSlotIdle();
+    if(state.settings.wheelStyle === 'poster' && !posterSpinning) renderPosterIdle();
   });
 
   /* ============================ ITEMS UI ============================ */
@@ -2408,6 +2696,10 @@
   // Called only when an actual winner is announced — notices never get an image.
   function applyBannerImage(winnerItem){
     el.bannerRibbon.classList.remove('layout-left','layout-right','layout-top','layout-bottom','layout-background');
+    // the poster reel already reveals the artwork zoomed in place right
+    // below the banner — showing it again here would just cover that up,
+    // so keep the ribbon text-only for this style.
+    if(state.settings.wheelStyle === 'poster') return;
     const dataURL = winnerItem && winnerItem.image ? itemImages[winnerItem.id] : null;
     if(!dataURL) return;
     el.bannerRibbon.classList.add('layout-'+state.settings.bannerImageLayout);
@@ -3395,6 +3687,7 @@
 
   el.spinBtn.addEventListener('click', handleSpinPress);
   if(el.slotSpinBtn) el.slotSpinBtn.addEventListener('click', handleSpinPress);
+  if(el.posterSpinBtn) el.posterSpinBtn.addEventListener('click', handleSpinPress);
   window.addEventListener('keydown', (e)=>{
     if(e.code === 'Space' && !isTypingTarget(e.target)){
       e.preventDefault();

@@ -23,6 +23,7 @@
       <div class="stage-mode-toggle" id="stageModeToggle" role="tablist" aria-label="Wheel style">
         <button class="stage-mode-btn" data-style="wheel" type="button" role="tab">🎡 Wheel</button>
         <button class="stage-mode-btn" data-style="slot" type="button" role="tab">🎰 Slot</button>
+        <button class="stage-mode-btn" data-style="poster" type="button" role="tab">🎬 Posters</button>
       </div>
       <div class="winner-banner" id="winnerBanner">
         <div class="banner-ribbon" id="bannerRibbon">
@@ -52,6 +53,17 @@
           </div>
         </div>
         <button class="slot-lever-btn" id="slotSpinBtn">SPIN</button>
+      </div>
+      <div class="poster-wrap hidden" id="posterWrap">
+        <div class="poster-cabinet">
+          <div class="poster-window" id="posterWindow">
+            <div class="poster-reel">
+              <div class="poster-strip" id="posterStrip0"></div>
+              <div class="poster-spotlight" id="posterSpotlight"></div>
+            </div>
+          </div>
+        </div>
+        <button class="poster-lever-btn" id="posterSpinBtn">SPIN</button>
       </div>
       <canvas class="confetti-canvas" id="confettiCanvas"></canvas>
       <p class="stage-foot" id="stageFoot">Tap <b>SPIN</b> or press <b>Space</b> to go — tap again to cancel mid-spin. The wheel picks a weighted-random winner the instant you spin; the animation just shows you the result.</p>
