@@ -92,7 +92,7 @@
       { id: id(), label: 'Burgers', weight: 2, color: null, image: null, winSound: null }
     ],
     paletteName: 'Carnival',
-    settings: { duration: 6, spins: 6, angle: 0, easing: 'cubic', randomizeAngle: false, labelCharLimit: 32, labelOverflow: false, labelRawSize: 17, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26 },
+    settings: { wheelStyle: 'wheel', nearMiss: false, duration: 6, spins: 6, angle: 0, easing: 'cubic', labelCharLimit: 32, labelOverflow: false, labelRawSize: 17, slotLabelCharLimit: 24, slotLabelFontSize: 26, idleSpin: true, bannerImageLayout: 'left', bannerImageOpacity: 1, bannerImageFit: 'contain', wheelTitleFont: 'fraunces', wheelTitleSize: 26, randomizeAngle: false },
     sound: {
       music: true, tick: true, win: true, spinStart: true,
       duckOnWin: false, duckLevel: 0.3, recencyWeighted: true, normalizeCustom: true, normalizeTargetPeak: 0.85,
@@ -1033,6 +1033,10 @@
     SOUND_DEFS.forEach(d=>{
       if(typeof state.sound.volumes[d.key] !== 'number') state.sound.volumes[d.key] = 0.5;
     });
+    if(state.settings.wheelStyle !== 'wheel' && state.settings.wheelStyle !== 'slot') state.settings.wheelStyle = 'wheel';
+    if(typeof state.settings.nearMiss !== 'boolean') state.settings.nearMiss = false;
+    if(typeof state.settings.slotLabelCharLimit !== 'number') state.settings.slotLabelCharLimit = 24;
+    if(typeof state.settings.slotLabelFontSize !== 'number') state.settings.slotLabelFontSize = 26;
     if(typeof state.settings.randomizeAngle !== 'boolean') state.settings.randomizeAngle = false;
     if(typeof state.settings.labelCharLimit !== 'number') state.settings.labelCharLimit = 32;
     if(typeof state.settings.labelOverflow !== 'boolean') state.settings.labelOverflow = false;
@@ -1139,6 +1143,15 @@
 
   /* ============================ ELEMENTS ============================ */
   const el = {
+    stageModeBtns: Array.from(document.querySelectorAll('.stage-mode-btn')),
+    nearMiss: document.getElementById('nearMiss'),
+    wheelWrap: document.getElementById('wheelWrap'),
+    slotWrap: document.getElementById('slotWrap'),
+    slotWindow: document.getElementById('slotWindow'),
+    slotPayline: document.getElementById('slotPayline'),
+    slotSpinBtn: document.getElementById('slotSpinBtn'),
+    slotStrips: [document.getElementById('slotStrip0')],
+    stageFoot: document.getElementById('stageFoot'),
     titleFontSelect: document.getElementById('titleFontSelect'),
     wheelTitleSizeRange: document.getElementById('wheelTitleSizeRange'),
     wheelTitleSizeVal: document.getElementById('wheelTitleSizeVal'),
@@ -1167,6 +1180,10 @@
     labelRawSizeRange: document.getElementById('labelRawSizeRange'),
     labelRawSizeVal: document.getElementById('labelRawSizeVal'),
     labelOverflow: document.getElementById('labelOverflow'),
+    slotLabelLimitRange: document.getElementById('slotLabelLimitRange'),
+    slotLabelLimitVal: document.getElementById('slotLabelLimitVal'),
+    slotLabelSizeRange: document.getElementById('slotLabelSizeRange'),
+    slotLabelSizeVal: document.getElementById('slotLabelSizeVal'),
     bannerImageLayout: document.getElementById('bannerImageLayout'),
     bannerImageFit: document.getElementById('bannerImageFit'),
     bannerImageOpacityRange: document.getElementById('bannerImageOpacityRange'),
@@ -1285,7 +1302,7 @@
   let idleRafId = null;
   let idleLastTime = null;
   function idleSpinFrame(now){
-    if(!state.settings.idleSpin || spinning){
+    if(!state.settings.idleSpin || spinning || state.settings.wheelStyle === 'slot'){
       idleRafId = null; idleLastTime = null;
       return;
     }
@@ -1297,7 +1314,7 @@
     idleRafId = requestAnimationFrame(idleSpinFrame);
   }
   function startIdleSpin(){
-    if(idleRafId != null || !state.settings.idleSpin || spinning) return;
+    if(idleRafId != null || !state.settings.idleSpin || spinning || state.settings.wheelStyle === 'slot') return;
     idleLastTime = null;
     idleRafId = requestAnimationFrame(idleSpinFrame);
   }
@@ -1401,11 +1418,14 @@
   }
 
   function drawWheel(){
+    updateSpinButtonsVisibility();
+    if(state.settings.wheelStyle === 'slot'){
+      if(!slotSpinning) renderSlotIdle();
+      return;
+    }
     const size = el.canvas.clientWidth;
     const cx = size/2, cy = size/2;
     ctx.clearRect(0,0,size,size);
-
-    el.spinBtn.classList.toggle('hidden', state.items.length === 0);
 
     ctx.save();
     ctx.translate(cx, cy);
@@ -1495,7 +1515,393 @@
   function deg2rad(d){ return d * Math.PI / 180; }
   function truncate(s, n){ return s.length > n ? s.slice(0,n-1)+'…' : s; }
 
-  window.addEventListener('resize', fitCanvas);
+  /* ============================ SLOT MACHINE ============================ */
+  // An alternate affordance for the exact same pick: instead of a spinning
+  // wheel, a single reel of item "symbols" scrolls and lands on the
+  // weighted-random winner. Odds, sounds, history, and the winner banner are
+  // all shared with the wheel — only how the result is revealed differs.
+  const SLOT_REEL_COUNT = 1;
+  const SLOT_VISIBLE_ROWS = 3; // rows visible in the reel; the middle one is the payline
+  const SLOT_LOOPS = 6;        // how many full shuffled passes the reel scrolls through before landing
+
+  let slotSpinning = false;
+  let slotCancelRequested = false;
+  let slotRafId = null;
+
+  function shuffledCopy(arr){
+    const a = arr.slice();
+    for(let i=a.length-1;i>0;i--){
+      const j = Math.floor(Math.random()*(i+1));
+      [a[i],a[j]] = [a[j],a[i]];
+    }
+    return a;
+  }
+
+  function slotWeightedPool(){
+    return state.items.filter(it=> (Math.max(0, Number(it.weight)||0)) > 0);
+  }
+
+  // The wheel never shows two adjacent slices in the same color, because
+  // slices are laid out in item order and the palette only repeats every
+  // Nth item. The reel's content is shuffled, though, so nothing stops two
+  // items that happen to land on the same cycled palette color — or even
+  // the same item, recurring across separate shuffled passes — from
+  // landing right next to each other, or one row apart within the 3-row
+  // window that's actually visible at once.
+  function buildColorMap(){
+    const map = new Map();
+    state.items.forEach((it, idx)=> map.set(it, colorFor(it, idx)));
+    return map;
+  }
+
+  // True if position i's color doesn't collide with either of the two
+  // positions on each side of it — i.e. it wouldn't repeat within any
+  // 3-row window that could ever be visible in the reel.
+  function positionOk(seq, colorMap, i){
+    const c = colorMap.get(seq[i]);
+    if(i-1>=0 && colorMap.get(seq[i-1])===c) return false;
+    if(i-2>=0 && colorMap.get(seq[i-2])===c) return false;
+    if(i+1<seq.length && colorMap.get(seq[i+1])===c) return false;
+    if(i+2<seq.length && colorMap.get(seq[i+2])===c) return false;
+    return true;
+  }
+
+  // Repairs `seq` in place so no position within [0, lockedFrom) repeats a
+  // color within 2 slots of itself — including against the fixed/"locked"
+  // trailing items from lockedFrom onward (checked against, but themselves
+  // never moved, since their positions are meaningful — e.g. the winner
+  // symbol). Each candidate swap is verified directly against the real
+  // resulting neighbors rather than reasoned about abstractly, so it's
+  // correct by construction rather than by (fallible) inspection.
+  function removeWindowRepeats(seq, colorMap, lockedFrom){
+    const limit = lockedFrom != null ? lockedFrom : seq.length;
+    const maxIterations = seq.length*8;
+    let iterations = 0;
+    for(let i=0;i<limit;i++){
+      while(!positionOk(seq, colorMap, i) && iterations < maxIterations){
+        iterations++;
+        let fixed = false;
+        for(let j=0;j<limit;j++){
+          if(j===i) continue;
+          [seq[i], seq[j]] = [seq[j], seq[i]];
+          if(positionOk(seq, colorMap, i) && positionOk(seq, colorMap, j)){ fixed = true; break; }
+          [seq[i], seq[j]] = [seq[j], seq[i]]; // undo
+        }
+        // if no swap fixes it, the pool is too color-homogeneous to avoid
+        // this particular repeat (e.g. fewer than 3 distinct colors in
+        // play) — leave it; it's the best achievable arrangement
+        if(!fixed) break;
+      }
+    }
+    return seq;
+  }
+
+  function pickFiller(pool, excludeColors, colorMap){
+    const candidates = pool.filter(it=> !excludeColors.includes(colorMap.get(it)));
+    const list = candidates.length ? candidates : pool;
+    return list[Math.floor(Math.random()*list.length)];
+  }
+
+  function getSlotSymbolHeight(){
+    const reel = el.slotWindow ? el.slotWindow.querySelector('.slot-reel') : null;
+    const h = reel ? reel.getBoundingClientRect().height : 0;
+    // Deliberately rounded to a whole pixel. The scrolling strip is
+    // transformed (translateY), which browsers composite on their own
+    // layer and can snap to the nearest device pixel independently of
+    // ordinary (non-transformed) layout — which is exactly how the
+    // payline is positioned. Feed both a fractional heightPx and the two
+    // can get snapped a pixel apart from each other despite using the
+    // "same" number; a whole-pixel value removes the ambiguity for both
+    // rendering paths to resolve differently.
+    return h > 0 ? Math.round(h / SLOT_VISIBLE_ROWS) : 96;
+  }
+
+  // Belt-and-suspenders fix for the same class of drift: rather than trust
+  // that the payline's CSS percentage sizing and the symbols' JS-computed
+  // pixel sizing land on the exact same fractional value (they didn't,
+  // reliably, once the reel had actually scrolled through many rows —
+  // browser rounding on repeated layout reads is not guaranteed stable
+  // frame to frame), the payline is now positioned in JS from the exact
+  // same heightPx number used for the symbols and the scroll math. There's
+  // no longer a second, independent calculation that can drift from it.
+  function positionPayline(heightPx){
+    if(!el.slotPayline) return;
+    el.slotPayline.style.top = heightPx + 'px';
+    el.slotPayline.style.height = heightPx + 'px';
+  }
+
+  function buildSlotSymbolEl(item, heightPx){
+    const div = document.createElement('div');
+    div.className = 'slot-symbol';
+    div.style.height = heightPx + 'px';
+    const idx = state.items.indexOf(item);
+    const color = colorFor(item, idx < 0 ? 0 : idx);
+    const imgSrc = itemImages[item.id];
+    div.style.background = color;
+    if(imgSrc){
+      const img = document.createElement('img');
+      img.src = imgSrc; img.alt = '';
+      div.appendChild(img);
+    } else {
+      div.style.color = readableTextColor(color);
+      const span = document.createElement('span');
+      span.className = 'slot-symbol-label';
+      span.style.fontSize = state.settings.slotLabelFontSize + 'px';
+      span.textContent = truncate(item.label || '—', state.settings.slotLabelCharLimit);
+      div.appendChild(span);
+    }
+    return div;
+  }
+
+  function renderReelStrip(stripEl, items, heightPx){
+    stripEl.innerHTML = '';
+    stripEl.style.transform = 'translateY(0px)';
+    const frag = document.createDocumentFragment();
+    items.forEach(it=> frag.appendChild(buildSlotSymbolEl(it, heightPx)));
+    stripEl.appendChild(frag);
+  }
+
+  function renderSlotIdle(){
+    const pool = slotWeightedPool();
+    const heightPx = getSlotSymbolHeight();
+    positionPayline(heightPx);
+    const colorMap = buildColorMap();
+    el.slotStrips.forEach(stripEl=>{
+      if(!stripEl) return;
+      if(pool.length === 0){
+        stripEl.innerHTML = '';
+        stripEl.style.transform = 'translateY(0px)';
+        const placeholder = document.createElement('div');
+        placeholder.className = 'slot-symbol slot-symbol-empty';
+        placeholder.style.height = heightPx + 'px';
+        placeholder.textContent = 'Add items to load the reel';
+        stripEl.appendChild(placeholder);
+        return;
+      }
+      const loops = Math.max(1, Math.ceil(SLOT_VISIBLE_ROWS/pool.length));
+      const seq = shuffledCopy(Array.from({length: loops}).flatMap(()=> pool));
+      removeWindowRepeats(seq, colorMap);
+      renderReelStrip(stripEl, seq.slice(0, SLOT_VISIBLE_ROWS), heightPx);
+    });
+  }
+
+  function buildReelStrip(pool, winnerItem, colorMap){
+    const winnerColor = colorMap.get(winnerItem);
+    const mainSeq = shuffledCopy(Array.from({length: SLOT_LOOPS}).flatMap(()=> pool));
+    // the filler is the row that ends up right below the winner at rest —
+    // it needs to differ from the winner AND from whatever row lands above
+    // the winner, or a 3-row-window repeat (top === bottom, straddling the
+    // winner) slips right back in even though no two rows are directly
+    // adjacent. mainSeq isn't repaired yet at this point, but its current
+    // last element is still the best available guess for "the row above."
+    const topColorGuess = mainSeq.length ? colorMap.get(mainSeq[mainSeq.length-1]) : null;
+    const filler = pickFiller(pool, [winnerColor, topColorGuess].filter(c=> c != null), colorMap);
+    const strip = [...mainSeq, winnerItem, filler];
+    // repair mainSeq's positions (0..mainSeq.length-1) in place; the winner
+    // and filler are checked against but never moved, since their final
+    // positions are what the landing animation targets
+    removeWindowRepeats(strip, colorMap, mainSeq.length);
+    return strip;
+  }
+
+  function setSpinButtonsState(running){
+    const label = running ? 'STOP' : 'SPIN';
+    [el.spinBtn, el.slotSpinBtn].forEach(btn=>{
+      if(!btn) return;
+      btn.textContent = label;
+      btn.classList.toggle('stopping', running);
+    });
+  }
+
+  function updateSpinButtonsVisibility(){
+    const empty = state.items.length === 0;
+    if(el.spinBtn) el.spinBtn.classList.toggle('hidden', empty);
+    if(el.slotSpinBtn) el.slotSpinBtn.classList.toggle('hidden', empty);
+  }
+
+  // Shared by both the wheel and the slot reel: eases most of the way to a
+  // "decoy" stopping point (so it looks like the spin is about to settle on
+  // the wrong item), holds there just long enough to register, then snaps
+  // on to the real result — the "wait, no—" beat. fromVal/decoyVal/toVal
+  // are plain numbers — degrees of rotation for the wheel, pixels of
+  // translateY for the reel. `overshoot` adds a slight past-the-target
+  // bounce-back for extra punch; the wheel's pointer just needs to end up
+  // in the right slice so a brief overshoot still reads fine, but the slot
+  // reel has a hard-edged payline window, so overshooting there visibly
+  // shows two symbols at once mid-bounce — pass overshoot:false for that.
+  function buildNearMissTimeline(fromVal, decoyVal, toVal, mainDuration, ease, overshoot){
+    const holdMs = 260; // a touch longer now that it visibly wobbles rather than freezing
+    const nudgeMs = Math.max(190, mainDuration*0.05);
+    // a couple of small, decaying oscillations around the hover point —
+    // reads as hanging undecided between two items rather than a rigid
+    // freeze. Scaled off the hover gap itself so it's proportionate
+    // whether that gap is a few pixels on the reel or tens of degrees on
+    // the wheel, and never swings wide enough to visibly cross into a
+    // third item.
+    const wobbleAmp = Math.abs(toVal-decoyVal) * 0.3;
+    const nudgeEaseBack = t=>{
+      const tm1 = t-1, c1 = 1.9, c3 = c1+1;
+      return 1 + c3*tm1*tm1*tm1 + c1*tm1*tm1;
+    };
+    const nudgeEaseSharp = t=> 1 - Math.pow(1-t, 4); // quick, no overshoot — lands exactly and stays put
+    const nudgeEase = overshoot ? nudgeEaseBack : nudgeEaseSharp;
+    const totalDuration = mainDuration + holdMs + nudgeMs;
+    return {
+      totalDuration,
+      valueAt(elapsed){
+        if(elapsed <= mainDuration){
+          const t = Math.min(1, elapsed/mainDuration);
+          return fromVal + (decoyVal-fromVal)*ease(t);
+        }
+        if(elapsed <= mainDuration+holdMs){
+          const holdT = (elapsed-mainDuration)/holdMs;
+          const decay = 1 - holdT; // settles down right as the nudge takes over
+          return decoyVal + Math.sin(holdT*Math.PI*2.5)*wobbleAmp*decay;
+        }
+        const t2 = Math.min(1, (elapsed-mainDuration-holdMs)/nudgeMs);
+        return decoyVal + (toVal-decoyVal)*nudgeEase(t2);
+      }
+    };
+  }
+
+  function doSlotSpin(){
+    if(slotSpinning) return;
+    stopActivePreview();
+    const pool = slotWeightedPool();
+    if(pool.length < 2){
+      flashMessage('Add at least two items with weight > 0 to spin.', 'Notice');
+      return;
+    }
+    slotSpinning = true;
+    slotCancelRequested = false;
+    clearTimeout(flashTimer);
+    setSpinButtonsState(true);
+    el.winnerBanner.classList.remove('show');
+    stopWinSound();
+    playSpinStart();
+
+    const winnerIdx = pickWeightedIndex();
+    const winnerItem = state.items[winnerIdx];
+    const heightPx = getSlotSymbolHeight();
+    positionPayline(heightPx);
+    const colorMap = buildColorMap();
+    const ease = easeFn(state.settings.easing);
+    const baseDuration = state.settings.duration*1000;
+    const stagger = 320; // ms of extra spin time per reel, in case a future style uses more than one
+
+    const reels = el.slotStrips.map((stripEl, i)=>{
+      const strip = buildReelStrip(pool, winnerItem, colorMap);
+      renderReelStrip(stripEl, strip, heightPx);
+      const winnerPos = strip.length - 2; // second-to-last: leaves one filler symbol visible below the payline
+      const targetY = -(winnerPos - 1) * heightPx; // -1 row so the winner lands in the middle (payline) row
+      const dur = baseDuration + i*stagger;
+      let timeline = null;
+      if(state.settings.nearMiss && strip.length > 2){
+        // hover partway between two symbols instead of squarely on one —
+        // and randomly on either side of the winner, so the final nudge
+        // sometimes continues forward and sometimes reels back
+        const direction = Math.random() < 0.5 ? 1 : -1;
+        const wobbleFraction = 0.3 + Math.random()*0.4;
+        const decoyY = targetY + direction*heightPx*wobbleFraction;
+        timeline = buildNearMissTimeline(0, decoyY, targetY, dur, ease, false);
+      }
+      return { stripEl, targetY, dur, timeline, lastTickStep: 0 };
+    });
+
+    const overallTotalDuration = Math.max(...reels.map(r=> r.timeline ? r.timeline.totalDuration : r.dur));
+    const startTime = performance.now();
+    startWhir();
+
+    function frame(now){
+      if(slotCancelRequested){ abortSlotSpin(); return; }
+      const elapsed = now-startTime;
+      let allDone = true;
+      reels.forEach(reel=>{
+        const reelTotal = reel.timeline ? reel.timeline.totalDuration : reel.dur;
+        if(elapsed < reelTotal) allDone = false;
+        const y = reel.timeline ? reel.timeline.valueAt(Math.min(elapsed, reelTotal)) : reel.targetY*ease(Math.min(1, elapsed/reel.dur));
+        reel.stripEl.style.transform = `translateY(${y}px)`;
+        const step = Math.floor(Math.abs(y) / heightPx);
+        if(step > reel.lastTickStep){
+          playTick();
+          reel.lastTickStep = step;
+        }
+      });
+      const overallT = Math.min(1, elapsed/overallTotalDuration);
+      updateWhir(Math.max(0, 1 - overallT));
+
+      if(!allDone){
+        slotRafId = requestAnimationFrame(frame);
+      } else {
+        reels.forEach(reel=> reel.stripEl.style.transform = `translateY(${reel.targetY}px)`);
+        finishSlotSpin(winnerItem, winnerIdx);
+      }
+    }
+    slotRafId = requestAnimationFrame(frame);
+  }
+
+  function cancelSlotSpin(){
+    if(!slotSpinning) return;
+    slotCancelRequested = true;
+  }
+
+  function abortSlotSpin(){
+    if(slotRafId) cancelAnimationFrame(slotRafId);
+    slotRafId = null;
+    slotSpinning = false;
+    slotCancelRequested = false;
+    stopWhir();
+    setSpinButtonsState(false);
+    flashMessage('Spin cancelled', 'Cancelled');
+  }
+
+  function finishSlotSpin(winnerItem, winnerIdx){
+    slotSpinning = false;
+    slotRafId = null;
+    setSpinButtonsState(false);
+    finishSpin(winnerItem, winnerIdx); // shared winner banner, confetti, sound, and history logic
+  }
+
+  function handleSpinPress(){
+    if(state.settings.wheelStyle === 'slot'){
+      slotSpinning ? cancelSlotSpin() : doSlotSpin();
+    } else {
+      spinning ? cancelSpin() : doSpin();
+    }
+  }
+
+  const WHEEL_STAGE_FOOT = 'Tap <b>SPIN</b> or press <b>Space</b> to go — tap again to cancel mid-spin. The wheel picks a weighted-random winner the instant you spin; the animation just shows you the result.';
+  const SLOT_STAGE_FOOT = 'Tap <b>SPIN</b> or press <b>Space</b> to pull the reel — tap again to cancel mid-spin. The winner is picked the instant you spin; the reel just shows you the result.';
+
+  function applyWheelStyle(){
+    const isSlot = state.settings.wheelStyle === 'slot';
+    if(el.wheelWrap) el.wheelWrap.classList.toggle('hidden', isSlot);
+    if(el.slotWrap) el.slotWrap.classList.toggle('hidden', !isSlot);
+    if(el.stageFoot) el.stageFoot.innerHTML = isSlot ? SLOT_STAGE_FOOT : WHEEL_STAGE_FOOT;
+    el.stageModeBtns.forEach(btn=> btn.classList.toggle('active', btn.dataset.style === state.settings.wheelStyle));
+    if(isSlot){
+      stopIdleSpin();
+      renderSlotIdle();
+    } else {
+      fitCanvas();
+      if(state.settings.idleSpin) startIdleSpin();
+    }
+    updateSpinButtonsVisibility();
+  }
+
+  el.stageModeBtns.forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      if(state.settings.wheelStyle === btn.dataset.style) return;
+      state.settings.wheelStyle = btn.dataset.style;
+      persistState();
+      applyWheelStyle();
+    });
+  });
+
+  window.addEventListener('resize', ()=>{
+    fitCanvas();
+    if(state.settings.wheelStyle === 'slot' && !slotSpinning) renderSlotIdle();
+  });
 
   /* ============================ ITEMS UI ============================ */
   let expandedSoundPanels = new Set(); // item ids whose winner-sound panel is currently open
@@ -1897,6 +2303,11 @@
     persistState();
   });
   function syncSettingsUI(){
+    el.nearMiss.checked = state.settings.nearMiss;
+    el.slotLabelLimitRange.value = state.settings.slotLabelCharLimit;
+    el.slotLabelLimitVal.textContent = state.settings.slotLabelCharLimit+' chars';
+    el.slotLabelSizeRange.value = state.settings.slotLabelFontSize;
+    el.slotLabelSizeVal.textContent = state.settings.slotLabelFontSize+'px';
     el.titleFontSelect.value = state.settings.wheelTitleFont;
     el.wheelTitleSizeRange.value = state.settings.wheelTitleSize;
     el.wheelTitleSizeVal.textContent = state.settings.wheelTitleSize+'px';
@@ -1921,6 +2332,22 @@
     el.bannerImageOpacityRange.value = Math.round(state.settings.bannerImageOpacity*100);
     el.bannerImageOpacityVal.textContent = Math.round(state.settings.bannerImageOpacity*100)+'%';
   }
+  el.nearMiss.addEventListener('change', ()=>{
+    state.settings.nearMiss = el.nearMiss.checked;
+    persistState();
+  });
+  el.slotLabelLimitRange.addEventListener('input', ()=>{
+    state.settings.slotLabelCharLimit = parseInt(el.slotLabelLimitRange.value, 10);
+    el.slotLabelLimitVal.textContent = state.settings.slotLabelCharLimit+' chars';
+    if(state.settings.wheelStyle === 'slot' && !slotSpinning) renderSlotIdle();
+    persistState();
+  });
+  el.slotLabelSizeRange.addEventListener('input', ()=>{
+    state.settings.slotLabelFontSize = parseInt(el.slotLabelSizeRange.value, 10);
+    el.slotLabelSizeVal.textContent = state.settings.slotLabelFontSize+'px';
+    if(state.settings.wheelStyle === 'slot' && !slotSpinning) renderSlotIdle();
+    persistState();
+  });
   el.durationRange.addEventListener('input', ()=>{
     state.settings.duration = parseInt(el.durationRange.value, 10);
     el.durationVal.textContent = state.settings.duration+'s';
@@ -2839,8 +3266,7 @@
     cancelRequested = false;
     stopIdleSpin();
     clearTimeout(flashTimer);
-    el.spinBtn.textContent = 'STOP';
-    el.spinBtn.classList.add('stopping');
+    setSpinButtonsState(true);
     el.winnerBanner.classList.remove('show');
     stopWinSound();
     playSpinStart();
@@ -2872,6 +3298,22 @@
     const ease = easeFn(state.settings.easing);
     const startTime = performance.now();
 
+    let rotationTimeline = null;
+    if(state.settings.nearMiss && segs.length > 1){
+      // hover somewhere near a neighboring slice — sometimes short of the
+      // winner (so the final nudge continues forward to reach it), and
+      // sometimes just past it (so the final nudge reels back to it) —
+      // and only partway across the slice boundary rather than squarely
+      // inside a whole neighboring slice, so it genuinely reads as
+      // undecided rather than "obviously stopped on this other item"
+      const neighborIdx = (winnerIdx - 1 + segs.length) % segs.length;
+      const neighborSpan = segs[neighborIdx] ? (segs[neighborIdx].end - segs[neighborIdx].start) : (360/segs.length);
+      const direction = Math.random() < 0.5 ? 1 : -1;
+      const decoyOffset = direction * Math.max(4, neighborSpan * (0.25 + Math.random()*0.4));
+      rotationTimeline = buildNearMissTimeline(from, to-decoyOffset, to, duration, ease, true);
+    }
+    const totalSpinDuration = rotationTimeline ? rotationTimeline.totalDuration : duration;
+
     startWhir();
 
     function frame(now){
@@ -2879,10 +3321,11 @@
         abortSpin();
         return;
       }
-      const t = Math.min(1, (now-startTime)/duration);
-      const eased = ease(t);
+      const elapsed = now-startTime;
       const prevRotation = currentRotation;
-      currentRotation = from + (to-from)*eased;
+      currentRotation = rotationTimeline
+        ? rotationTimeline.valueAt(Math.min(elapsed, totalSpinDuration))
+        : from + (to-from)*ease(Math.min(1, elapsed/duration));
       drawWheel();
 
       // ticks
@@ -2895,7 +3338,7 @@
       const maxSpeed = (to-from)/ (duration/1000) / 60 * 2.2;
       updateWhir(Math.min(1, instSpeed/Math.max(1,maxSpeed)));
 
-      if(t < 1){
+      if(elapsed < totalSpinDuration){
         rafId = requestAnimationFrame(frame);
       } else {
         currentRotation = to;
@@ -2917,16 +3360,14 @@
     spinning = false;
     cancelRequested = false;
     stopWhir();
-    el.spinBtn.textContent = 'SPIN';
-    el.spinBtn.classList.remove('stopping');
+    setSpinButtonsState(false);
     flashMessage('Spin cancelled', 'Cancelled');
   }
 
   function finishSpin(winnerItem, winnerIdx){
     spinning = false;
     rafId = null;
-    el.spinBtn.textContent = 'SPIN';
-    el.spinBtn.classList.remove('stopping');
+    setSpinButtonsState(false);
     if(state.sound.duckOnWin && whirNodes){
       duckWhir();
     } else {
@@ -2952,11 +3393,12 @@
     // idle spin intentionally does NOT resume here — see hideBanner()
   }
 
-  el.spinBtn.addEventListener('click', ()=>{ spinning ? cancelSpin() : doSpin(); });
+  el.spinBtn.addEventListener('click', handleSpinPress);
+  if(el.slotSpinBtn) el.slotSpinBtn.addEventListener('click', handleSpinPress);
   window.addEventListener('keydown', (e)=>{
     if(e.code === 'Space' && !isTypingTarget(e.target)){
       e.preventDefault();
-      spinning ? cancelSpin() : doSpin();
+      handleSpinPress();
     }
   });
   function isTypingTarget(t){
@@ -3323,7 +3765,7 @@
     fitCanvas();
     fitConfetti();
     decodeAllCustomSounds();
-    startIdleSpin();
+    applyWheelStyle();
   }
   init();
 

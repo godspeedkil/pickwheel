@@ -20,6 +20,10 @@
 
   <main class="stage-grid">
     <section class="wheel-stage">
+      <div class="stage-mode-toggle" id="stageModeToggle" role="tablist" aria-label="Wheel style">
+        <button class="stage-mode-btn" data-style="wheel" type="button" role="tab">🎡 Wheel</button>
+        <button class="stage-mode-btn" data-style="slot" type="button" role="tab">🎰 Slot</button>
+      </div>
       <div class="winner-banner" id="winnerBanner">
         <div class="banner-ribbon" id="bannerRibbon">
           <button class="banner-close" id="winnerBannerClose" title="Dismiss" aria-label="Dismiss">✕</button>
@@ -33,13 +37,24 @@
           </div>
         </div>
       </div>
-      <div class="wheel-wrap">
+      <div class="wheel-wrap" id="wheelWrap">
         <div class="pointer"></div>
         <canvas id="wheelCanvas" width="600" height="600"></canvas>
         <button class="hub-btn" id="spinBtn">SPIN</button>
       </div>
+      <div class="slot-wrap hidden" id="slotWrap">
+        <div class="slot-cabinet">
+          <div class="slot-window" id="slotWindow">
+            <div class="slot-reel">
+              <div class="slot-strip" id="slotStrip0"></div>
+              <div class="slot-payline" id="slotPayline"></div>
+            </div>
+          </div>
+        </div>
+        <button class="slot-lever-btn" id="slotSpinBtn">SPIN</button>
+      </div>
       <canvas class="confetti-canvas" id="confettiCanvas"></canvas>
-      <p class="stage-foot">Tap <b>SPIN</b> or press <b>Space</b> to go — tap again to cancel mid-spin. The wheel picks a weighted-random winner the instant you spin; the animation just shows you the result.</p>
+      <p class="stage-foot" id="stageFoot">Tap <b>SPIN</b> or press <b>Space</b> to go — tap again to cancel mid-spin. The wheel picks a weighted-random winner the instant you spin; the animation just shows you the result.</p>
     </section>
 
     <aside class="panel">
@@ -131,6 +146,10 @@ Burgers, 2"></textarea>
               <div class="lbl">Idle spin<small>Wheel rotates slowly for looks when it's not spinning — never produces a result</small></div>
               <label class="switch"><input type="checkbox" id="idleSpin"><span class="track"></span></label>
             </div>
+            <div class="switch-row" style="border-bottom:none; padding-top:0; margin-bottom:16px;">
+              <div class="lbl">Near miss<small>Slows down and hovers between two items, wobbling for a beat, before snapping to the real result — works on both the wheel and the slot machine</small></div>
+              <label class="switch"><input type="checkbox" id="nearMiss"><span class="track"></span></label>
+            </div>
             <div class="field">
               <label style="margin-bottom:0;">Easing style</label>
               <select class="field-select" id="easingSelect">
@@ -151,6 +170,16 @@ Burgers, 2"></textarea>
             <div class="switch-row" style="border-bottom:none; padding-top:0; margin-bottom:16px;">
               <div class="lbl">Allow text to overflow<small>Lets a slice's label spill into neighboring slices or past the rim instead of shrinking to fit — trades containment for legibility on a heavily populated wheel.</small></div>
               <label class="switch"><input type="checkbox" id="labelOverflow"><span class="track"></span></label>
+            </div>
+
+            <h3 class="panel-title">Slot machine text</h3>
+            <div class="field">
+              <label>Label length on slot <span class="val" id="slotLabelLimitVal">24 chars</span></label>
+              <input type="range" id="slotLabelLimitRange" min="10" max="60" step="1" value="24">
+            </div>
+            <div class="field">
+              <label>Slot text size <span class="val" id="slotLabelSizeVal">26px</span></label>
+              <input type="range" id="slotLabelSizeRange" min="12" max="42" step="1" value="26">
             </div>
           </div>
 
